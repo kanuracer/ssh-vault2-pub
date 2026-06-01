@@ -1,0 +1,15 @@
+{
+	"fixed": {
+		"file_version": "1.2.26"
+	},
+	"info": {
+		"0000": {
+			"ProductVersion": "1.2.26",
+			"CompanyName": "Example Org",
+			"FileDescription": "SSH/SFTP desktop client",
+			"LegalCopyright": "© 2026, Example Org",
+			"ProductName": "ssh-vault2",
+			"Comments": "SSH/SFTP desktop client"
+		}
+	}
+}

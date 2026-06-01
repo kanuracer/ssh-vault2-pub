@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<MsixPackagingToolTemplate
+    xmlns="http://schemas.microsoft.com/msix/packaging/msixpackagingtool/template/2022">
+    <Settings
+        AllowTelemetry="false"
+        ApplyACLsToPackageFiles="true"
+        GenerateCommandLineFile="true"
+        AllowPromptForPassword="false">
+    </Settings>
+    <Installer
+        Path="ssh-vault2"
+        Arguments=""
+        InstallLocation="C:\Program Files\Example Org\ssh-vault2">
+    </Installer>
+    <PackageInformation
+        PackageName="ssh-vault2"
+        PackageDisplayName="ssh-vault2"
+        PublisherName="CN=Example Org"
+        PublisherDisplayName="Example Org"
+        Version="1.2.12.0"
+        PackageDescription="SSH/SFTP desktop client">
+        <Capabilities>
+            <Capability Name="runFullTrust" />
+
+        </Capabilities>
+        <Applications>
+            <Application
+                Id="app.sshvault2.desktop"
+                Description="SSH/SFTP desktop client"
+                DisplayName="ssh-vault2"
+                ExecutableName="ssh-vault2"
+                EntryPoint="Windows.FullTrustApplication">
+
+            </Application>
+        </Applications>
+        <Resources>
+            <Resource Language="en-us" />
+        </Resources>
+        <Dependencies>
+            <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
+        </Dependencies>
+        <Properties>
+            <Framework>false</Framework>
+            <DisplayName>ssh-vault2</DisplayName>
+            <PublisherDisplayName>Example Org</PublisherDisplayName>
+            <Description>SSH/SFTP desktop client</Description>
+            <Logo>Assets\AppIcon.png</Logo>
+        </Properties>
+    </PackageInformation>
+    <SaveLocation PackagePath="ssh-vault2.msix" />
+    <PackageIntegrity>
+        <CertificatePath></CertificatePath>
+    </PackageIntegrity>
+</MsixPackagingToolTemplate>

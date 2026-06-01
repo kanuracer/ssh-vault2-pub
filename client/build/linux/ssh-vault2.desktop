@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ssh-vault2
+Exec=ssh-vault2
+Icon=ssh-vault2
+Categories=Development;
+Terminal=false
+Keywords=wails
+Version=1.0
+StartupNotify=false

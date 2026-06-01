@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=ssh-vault2
+Comment=SSH/SFTP desktop client
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/ssh-vault2 %u
+Terminal=false
+Type=Application
+Icon=ssh-vault2
+Categories=Utility;
+StartupWMClass=ssh-vault2
+
+ 

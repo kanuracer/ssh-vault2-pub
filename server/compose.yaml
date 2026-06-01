@@ -1,0 +1,45 @@
+services:
+  ssh-vault2-server:
+    build:
+      context: /opt/ssh-vault2-source/server
+      dockerfile: Dockerfile
+    image: ssh-vault2-server:local
+    container_name: ssh-vault2-server
+    restart: unless-stopped
+    user: "988:988"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    ports:
+      - "127.0.0.1:18080:18080"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "18080"
+      SSH_VAULT2_ROOT: "/var/lib/ssh-vault2"
+      SSH_VAULT2_PUBLIC_URL: "https://ssh-vault.example.org"
+      SSH_VAULT2_REGISTRATION_MODE: "approval"
+      SSH_VAULT2_ADMIN_ACCOUNTS: "adminuser"
+    volumes:
+      - /opt/ssh-vault2-server:/var/lib/ssh-vault2
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - |
+          fetch('http://127.0.0.1:' + (process.env.PORT || 18080) + '/healthz')
+            .then((r) => process.exit(r.ok ? 0 : 1))
+            .catch(() => process.exit(1))
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - ssh-vault2
+networks:
+  ssh-vault2:
+    driver: bridge
