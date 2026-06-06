@@ -83,6 +83,7 @@ export class FileEntry {
 
 export class HostConfig {
     "id": string;
+    "protocol"?: string;
     "name": string;
     "address": string;
     "port": number;
@@ -93,6 +94,15 @@ export class HostConfig {
     "privateKey"?: string;
     "passwordSaved"?: boolean;
     "privateKeySaved"?: boolean;
+    "rdpEnabled"?: boolean;
+    "rdpPort"?: number;
+    "rdpUsername"?: string;
+    "rdpPassword"?: string;
+    "rdpPasswordSaved"?: boolean;
+    "rdpDomain"?: string;
+    "rdpWidth"?: number;
+    "rdpHeight"?: number;
+    "rdpScaleMode"?: string;
     "vaultId"?: string;
     "tags": string[];
     "group"?: string;
@@ -128,10 +138,10 @@ export class HostConfig {
      * Creates a new HostConfig instance from a string or object.
      */
     static createFrom($$source: any = {}): HostConfig {
-        const $$createField12_0 = $$createType0;
+        const $$createField22_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("tags" in $$parsedSource) {
-            $$parsedSource["tags"] = $$createField12_0($$parsedSource["tags"]);
+            $$parsedSource["tags"] = $$createField22_0($$parsedSource["tags"]);
         }
         return new HostConfig($$parsedSource as Partial<HostConfig>);
     }
@@ -331,6 +341,122 @@ export class LocalVaultStatus {
     }
 }
 
+export class RDPClipboardFileUpload {
+    "name": string;
+    "base64": string;
+    "isDirectory"?: boolean;
+
+    /** Creates a new RDPClipboardFileUpload instance. */
+    constructor($$source: Partial<RDPClipboardFileUpload> = {}) {
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("base64" in $$source)) {
+            this["base64"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new RDPClipboardFileUpload instance from a string or object.
+     */
+    static createFrom($$source: any = {}): RDPClipboardFileUpload {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new RDPClipboardFileUpload($$parsedSource as Partial<RDPClipboardFileUpload>);
+    }
+}
+
+export class RDPDiagnostics {
+    "sessionId": string;
+    "bitmapUpdates": number;
+    "compressedUpdates": number;
+    "bytesApplied": number;
+    "dirtyFrames": number;
+    "fullFrames": number;
+    "lastFrameAt": number;
+    "lastPixelFormat": string;
+    "colorDepths": { [_ in string]?: number };
+
+    /** Creates a new RDPDiagnostics instance. */
+    constructor($$source: Partial<RDPDiagnostics> = {}) {
+        if (!("sessionId" in $$source)) {
+            this["sessionId"] = "";
+        }
+        if (!("bitmapUpdates" in $$source)) {
+            this["bitmapUpdates"] = 0;
+        }
+        if (!("compressedUpdates" in $$source)) {
+            this["compressedUpdates"] = 0;
+        }
+        if (!("bytesApplied" in $$source)) {
+            this["bytesApplied"] = 0;
+        }
+        if (!("dirtyFrames" in $$source)) {
+            this["dirtyFrames"] = 0;
+        }
+        if (!("fullFrames" in $$source)) {
+            this["fullFrames"] = 0;
+        }
+        if (!("lastFrameAt" in $$source)) {
+            this["lastFrameAt"] = 0;
+        }
+        if (!("lastPixelFormat" in $$source)) {
+            this["lastPixelFormat"] = "";
+        }
+        if (!("colorDepths" in $$source)) {
+            this["colorDepths"] = {};
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new RDPDiagnostics instance from a string or object.
+     */
+    static createFrom($$source: any = {}): RDPDiagnostics {
+        const $$createField8_0 = $$createType3;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("colorDepths" in $$parsedSource) {
+            $$parsedSource["colorDepths"] = $$createField8_0($$parsedSource["colorDepths"]);
+        }
+        return new RDPDiagnostics($$parsedSource as Partial<RDPDiagnostics>);
+    }
+}
+
+export class RDPRenderEndpoint {
+    "sessionId": string;
+    "url": string;
+    "width": number;
+    "height": number;
+
+    /** Creates a new RDPRenderEndpoint instance. */
+    constructor($$source: Partial<RDPRenderEndpoint> = {}) {
+        if (!("sessionId" in $$source)) {
+            this["sessionId"] = "";
+        }
+        if (!("url" in $$source)) {
+            this["url"] = "";
+        }
+        if (!("width" in $$source)) {
+            this["width"] = 0;
+        }
+        if (!("height" in $$source)) {
+            this["height"] = 0;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new RDPRenderEndpoint instance from a string or object.
+     */
+    static createFrom($$source: any = {}): RDPRenderEndpoint {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new RDPRenderEndpoint($$parsedSource as Partial<RDPRenderEndpoint>);
+    }
+}
+
 export class ReleaseAsset {
     "name": string;
     "url": string;
@@ -389,8 +515,8 @@ export class ReleaseIndex {
      * Creates a new ReleaseIndex instance from a string or object.
      */
     static createFrom($$source: any = {}): ReleaseIndex {
-        const $$createField1_0 = $$createType4;
-        const $$createField2_0 = $$createType6;
+        const $$createField1_0 = $$createType5;
+        const $$createField2_0 = $$createType7;
         const $$createField3_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("versions" in $$parsedSource) {
@@ -427,7 +553,7 @@ export class ReleaseVersion {
      * Creates a new ReleaseVersion instance from a string or object.
      */
     static createFrom($$source: any = {}): ReleaseVersion {
-        const $$createField1_0 = $$createType6;
+        const $$createField1_0 = $$createType7;
         const $$createField2_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("assets" in $$parsedSource) {
@@ -736,7 +862,8 @@ export class VaultCredential {
 const $$createType0 = $Create.Array($Create.Any);
 const $$createType1 = IdentityOption.createFrom;
 const $$createType2 = $Create.Array($$createType1);
-const $$createType3 = ReleaseVersion.createFrom;
-const $$createType4 = $Create.Array($$createType3);
-const $$createType5 = ReleaseAsset.createFrom;
-const $$createType6 = $Create.Array($$createType5);
+const $$createType3 = $Create.Map($Create.Any, $Create.Any);
+const $$createType4 = ReleaseVersion.createFrom;
+const $$createType5 = $Create.Array($$createType4);
+const $$createType6 = ReleaseAsset.createFrom;
+const $$createType7 = $Create.Array($$createType6);

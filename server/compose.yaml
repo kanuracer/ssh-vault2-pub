@@ -3,7 +3,7 @@ services:
     build:
       context: /opt/ssh-vault2-source/server
       dockerfile: Dockerfile
-    image: ssh-vault2-server:local
+    image: ssh-vault2-server:1.5.5
     container_name: ssh-vault2-server
     restart: unless-stopped
     user: "988:988"
@@ -40,6 +40,7 @@ services:
       start_period: 15s
     networks:
       - ssh-vault2
+
 networks:
   ssh-vault2:
     driver: bridge

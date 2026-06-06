@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import type { DragEvent, MouseEvent } from 'react';
+import type { DragEvent, MouseEvent, KeyboardEvent as ReactKeyboardEvent, ClipboardEvent as ReactClipboardEvent } from 'react';
 import { Events } from '@wailsio/runtime';
+import { RDPWebGLRenderer, parseRDPBinaryFrame, type RDPBinaryFrame } from './rdpWebglRenderer';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -19,7 +20,10 @@ const validSyncEndpoint = (v = '') => {
     return u.protocol === 'https:' || (u.protocol === 'http:' && ['localhost','127.0.0.1','::1'].includes(u.hostname));
   } catch { return false; }
 };
-const emptyHost: HostConfig = { id: '', name: '', address: '', port: 22, username: '', authMode: 'key', keyPath: '', password: '', vaultId: '', tags: [] };
+const emptyHost: HostConfig = { id: '', protocol:'ssh', name: '', address: '', port: 22, username: '', authMode: 'key', keyPath: '', password: '', vaultId: '', tags: [], rdpEnabled:false, rdpPort:3389, rdpUsername:'', rdpPassword:'', rdpDomain:'', rdpWidth:1280, rdpHeight:800, rdpScaleMode:'smart' } as any;
+const hostProtocol = (h: HostConfig): 'ssh'|'rdp' => ((h as any).protocol === 'rdp' || (h as any).rdpEnabled) ? 'rdp' : 'ssh';
+const hostUserLabel = (h: HostConfig) => hostProtocol(h) === 'rdp' ? ((h as any).rdpUsername || h.username || 'rdp') : (h.username || 'ssh');
+const hostPortLabel = (h: HostConfig) => hostProtocol(h) === 'rdp' ? ((h as any).rdpPort || 3389) : (h.port || 22);
 const fmt = (n: number) => n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : n > 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`;
 const redactSecrets = (input = '') => String(input)
   .replace(/-----BEGIN[\s\S]*?PRIVATE KEY-----[\s\S]*?-----END[\s\S]*?PRIVATE KEY-----/g, '<private-key-redacted>')
@@ -96,7 +100,7 @@ const octalWithDirX = (octal: string) => { let o = octalNorm(octal); for (let r=
 const fileIcon = (f: FileEntry) => f.type === 'directory' ? '📁' : '📄';
 const emptyVault: VaultCredential = { id:'', name:'', username:'', authMode:'password', password:'', keyPath:'', privateKey:'' };
 const scrubVaultCredential = (v: VaultCredential): VaultCredential => ({...v, password:'', privateKey:''});
-const scrubHostConfig = (h: HostConfig): HostConfig => ({...h, password:'', privateKey:''});
+const scrubHostConfig = (h: HostConfig): HostConfig => ({...h, password:'', privateKey:'', rdpPassword:''});
 const emptyLocalVaultStatus: LocalVaultStatus = { configured:false, unlocked:false, encryptedValues:0, plaintextSecrets:0, message:'Lokaler Tresor noch nicht geprüft.' };
 type AppTheme = 'default'|'github-gray'|'matrix-green'|'liquid-glozzy'|'light';
 const themeOptions: {value: AppTheme; label: string}[] = [
@@ -110,9 +114,22 @@ type FileEditorState = {side:'local'|'remote'; path:string; name:string; content
 type ExternalDropItem = {relPath:string;file?:File;kind:'file'|'directory'};
 type TerminalChunk = string | Uint8Array;
 type TerminalPayload = {seq: number; data: TerminalChunk};
-type TerminalRecord = {term: Terminal; fit: FitAddon; el: HTMLDivElement; cols?: number; rows?: number; resizeSeq?: number; resizeObserver?: ResizeObserver; resizeTimer?: number; resizeFrame?: number; altScreen?: boolean; altScanTail?: string; altRefreshTimer?: number; expectedSeq?: number; seqBuffer?: Record<number, TerminalChunk>; seqGapTimer?: number};
+type TerminalContextMenu = {x:number;y:number;sessionId:string};
+type TerminalRecord = {term: Terminal; fit: FitAddon; el: HTMLDivElement; cols?: number; rows?: number; resizeSeq?: number; resizeObserver?: ResizeObserver; resizeTimer?: number; resizeFrame?: number; altScreen?: boolean; altScanTail?: string; altRefreshTimer?: number; expectedSeq?: number; seqBuffer?: Record<number, TerminalChunk>; seqGapTimer?: number; contextMenuHandler?: (e: globalThis.MouseEvent) => void};
+type RDPAudioRecord = {ctx: AudioContext; nextTime: number};
 type SftpTab = {id:string; hostID:string; title:string; remotePath:string; remote:FileEntry[]; selectedRemote:string};
+type RDPScaleMode = 'smart'|'sharp'|'fit'|'original';
+const isFullRDPFrame = (frame: RDPBinaryFrame) => frame.left === 0 && frame.top === 0 && frame.width === frame.surfaceWidth && frame.height === frame.surfaceHeight;
+const lastFullRDPFrameIndex = (frames: RDPBinaryFrame[]) => { for (let i = frames.length - 1; i >= 0; i--) if (isFullRDPFrame(frames[i])) return i; return -1; };
+const rdpScaleModeOf = (host?: HostConfig): RDPScaleMode => { const m = (host as any)?.rdpScaleMode; return m === 'sharp' || m === 'fit' || m === 'original' ? m : 'smart'; };
 const storedTheme = (): AppTheme => { const t = localStorage.getItem('sshv.theme'); if (t === 'apple-liquid') { localStorage.setItem('sshv.theme','liquid-glozzy'); return 'liquid-glozzy'; } return t === 'github-gray' || t === 'matrix-green' || t === 'liquid-glozzy' || t === 'light' ? t : 'default'; };
+const visibleTagsStorageKey = 'sshv.visibleTags';
+const storedVisibleTags = (): string[] => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(visibleTagsStorageKey) || '[]');
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string' && x.trim().length > 0) : [];
+  } catch { return []; }
+};
 const terminalTheme = (theme: AppTheme) => theme === 'github-gray'
   ? { background: '#1c2128', foreground: '#adbac7', cursor: '#539bf5', selectionBackground: '#373e47' }
   : theme === 'liquid-glozzy'
@@ -134,7 +151,11 @@ function App() {
   const [editing, setEditing] = useState(false);
   const [sessions, setSessions] = useState<SessionState[]>([]);
   const [activeSession, setActiveSession] = useState<string>('');
-  const [view, setView] = useState<'terminal'|'sftp'|'vault'|'settings'>('terminal');
+  const [rdpSessions, setRdpSessions] = useState<SessionState[]>([]);
+  const [activeRdp, setActiveRdp] = useState<string>('');
+  const [view, setView] = useState<'terminal'|'sftp'|'rdp'|'vault'|'settings'>('terminal');
+  const [tagFilterOpen, setTagFilterOpen] = useState(false);
+  const [visibleTags, setVisibleTags] = useState<string[]>(storedVisibleTags);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('sshv.sidebarCollapsed') === '1');
   const [theme, setTheme] = useState<AppTheme>(storedTheme);
   const [sftpId, setSftpId] = useState<string>('');
@@ -173,10 +194,26 @@ function App() {
   const [msg, setMsg] = useState<string>('Bereit');
   const [syncNotice, setSyncNotice] = useState<SyncNotice>(() => syncInfo('Sync aus — lokal zuerst.'));
   const syncMsg = syncNotice.message;
+  const [syncRunning, setSyncRunning] = useState(false);
+  const syncVaultLocked = syncSecretsLocked(syncCfg, syncPass) && localVault.configured && !localVault.unlocked;
+  const syncCanRun = syncReady(syncCfg, syncPass) && !syncVaultLocked;
+  const syncFooterState = !syncCfg.enabled ? 'off' : syncRunning ? 'syncing' : syncNotice.kind === 'error' ? 'error' : syncVaultLocked ? 'locked' : !syncCanRun ? 'waiting' : (syncNotice.kind === 'success' || !!syncCfg.lastSync) ? 'ok' : 'ready';
+  const syncFooterTitle = syncFooterState === 'off' ? 'Sync aus' : syncFooterState === 'syncing' ? 'Sync läuft' : syncFooterState === 'locked' ? 'Sync wartet auf Datensafe' : syncFooterState === 'waiting' ? syncNotReadyText(syncCfg, syncPass) : syncFooterState === 'error' ? `Sync Fehler: ${syncMsg}` : syncMsg;
+  const availableHostTags = Array.from(new Set(hosts.flatMap(h => h.tags || []).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
+  const filteredHosts = visibleTags.length === 0 ? hosts : hosts.filter(h => (h.tags || []).some(t => visibleTags.includes(t)));
+  const hiddenHostCount = hosts.length - filteredHosts.length;
+  const setAllTagsVisible = () => setVisibleTags([]);
+  const toggleVisibleTag = (tag: string) => setVisibleTags(prev => {
+    const base = prev.length === 0 ? availableHostTags : prev;
+    const next = base.includes(tag) ? base.filter(t => t !== tag) : [...base, tag];
+    return next.length === availableHostTags.length ? [] : next;
+  });
   const setSyncMsg = (message: string) => setSyncNotice(syncNoticeFromText(message));
   const [connectingSSH, setConnectingSSH] = useState(false);
   const [connectingSFTP, setConnectingSFTP] = useState(false);
+  const [connectingRDP, setConnectingRDP] = useState(false);
   const [ctx, setCtx] = useState<{x:number,y:number,host:HostConfig}|null>(null);
+  const [termCtx, setTermCtx] = useState<TerminalContextMenu | null>(null);
   const [selectedLocal, setSelectedLocal] = useState<string>('');
   const [selectedRemote, setSelectedRemote] = useState<string>('');
   const [sftpCtx, setSftpCtx] = useState<{x:number,y:number,side:'local'|'remote',entry?:FileEntry}|null>(null);
@@ -200,9 +237,25 @@ function App() {
   const syncCfgRef = useRef(syncCfg);
   const syncPassRef = useRef(syncPass);
   const localVaultSettingsRef = useRef<HTMLElement | null>(null);
+  const syncSettingsRef = useRef<HTMLElement | null>(null);
+  const syncActionsRef = useRef<HTMLDivElement | null>(null);
   const updateSettingsRef = useRef<HTMLElement | null>(null);
   const pendingTermBuffers = useRef<Record<string, TerminalPayload[]>>({});
   const terms = useRef<Record<string, TerminalRecord>>({});
+  const rdpCanvases = useRef<Record<string, HTMLCanvasElement>>({});
+  const rdpRenderers = useRef<Record<string, RDPWebGLRenderer>>({});
+  const rdpRenderStreams = useRef<Record<string, WebSocket>>({});
+  const rdpRenderFrameQueues = useRef<Record<string, RDPBinaryFrame[]>>({});
+  const rdpRenderFrameRAF = useRef<Record<string, number>>({});
+  const rdpAudio = useRef<Record<string, RDPAudioRecord>>({});
+  const rdpPressedKeys = useRef<Record<string, Set<string>>>({});
+  const rdpSuppressedKeyUps = useRef<Record<string, Set<string>>>({});
+  const rdpMouseMoves = useRef<Record<string, {x:number; y:number; frame?:number; timer?:number; lastSent?:number}>>({});
+  const rdpWraps = useRef<Record<string, HTMLDivElement>>({});
+  const rdpWrapObservers = useRef<Record<string, ResizeObserver>>({});
+  const rdpResizeTimer = useRef<number | undefined>(undefined);
+  const rdpConnectSizes = useRef<Record<string, string>>({});
+  const rdpOpeningHosts = useRef<Set<string>>(new Set());
   const terminalPaneRef = useRef<HTMLDivElement | null>(null);
 
   const reloadHosts = () => API.ListHosts().then(h => { const clean = h.map(scrubHostConfig); setHosts(clean); if (!selected || !clean.some(x => x.id === selected)) setSelected(clean[0]?.id || ''); }).catch(e => setMsg('Hosts laden fehlgeschlagen: '+cleanError(e)));
@@ -215,6 +268,39 @@ function App() {
       return out;
     }
     return String(payload?.data || '');
+  };
+  const playRDPAudio = (payload: any) => {
+    const sessionID = String(payload?.sessionID || '');
+    const b64 = String(payload?.base64 || '');
+    const sampleRate = Number(payload?.sampleRate || 0);
+    const channels = Math.max(1, Math.min(2, Number(payload?.channels || 1)));
+    const bits = Number(payload?.bitsPerSample || 16);
+    if (!sessionID || !b64 || !sampleRate || bits !== 16) return;
+    const AudioCtor = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtor) return;
+    let rec = rdpAudio.current[sessionID];
+    if (!rec || rec.ctx.sampleRate !== sampleRate) {
+      try { rec?.ctx.close(); } catch {}
+      rec = {ctx: new AudioCtor({sampleRate}), nextTime: 0};
+      rdpAudio.current[sessionID] = rec;
+    }
+    try { if (rec.ctx.state === 'suspended') void rec.ctx.resume(); } catch {}
+    const bin = window.atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const samples = Math.floor(bytes.length / 2 / channels);
+    if (samples <= 0) return;
+    const buffer = rec.ctx.createBuffer(channels, samples, sampleRate);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    for (let i = 0; i < samples; i++) for (let ch = 0; ch < channels; ch++) buffer.getChannelData(ch)[i] = view.getInt16((i * channels + ch) * 2, true) / 32768;
+    const src = rec.ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(rec.ctx.destination);
+    const now = rec.ctx.currentTime;
+    const start = Math.max(now + 0.02, rec.nextTime || 0);
+    rec.nextTime = start + buffer.duration;
+    if (rec.nextTime - now > 0.8) rec.nextTime = now + buffer.duration;
+    src.start(start);
   };
   const chunkControlText = (data: TerminalChunk) => {
     if (typeof data === 'string') return data;
@@ -328,7 +414,9 @@ function App() {
     API.LocalHome().then(p => { setLocalPath(p); return API.LocalList(p); }).then(setLocal).catch(e => setMsg(cleanError(e)));
     const offData = Events.On('ssh:data', (ev: any) => { const d = ev.data; writeSSHPayload(d.sessionId, Number(d.seq || 0), decodeTerminalChunk(d)); });
     const offStatus = Events.On('ssh:status', (ev: any) => { const st = ev.data as SessionState; setSessions(prev => prev.map(x => x.id === st.id ? st : x)); });
-    return () => { offData(); offStatus(); };
+    const offRdpStatus = Events.On('rdp:status', (ev: any) => { const st = ev.data as SessionState; if (st.status === 'closed') { dropRDPClientSession(st.id); return; } setRdpSessions(prev => prev.map(x => x.id === st.id ? st : x)); });
+    const offRdpAudio = Events.On('rdp:audio', (ev: any) => playRDPAudio(ev.data));
+    return () => { offData(); offStatus(); offRdpStatus(); offRdpAudio(); Object.values(rdpAudio.current).forEach(r => { try { r.ctx.close(); } catch {} }); rdpAudio.current = {}; };
   }, []);
 
   useEffect(() => { const h = hosts.find(x => x.id === selected); if (h && !editing) setDraft({...h, tags: [...(h.tags || [])]}); }, [selected, hosts, editing]);
@@ -338,15 +426,16 @@ function App() {
     if (!sftpId) return;
     setSftpTabs(prev => prev.map(t => t.id === sftpId ? {...t, remotePath, remote, selectedRemote} : t));
   }, [sftpId, remotePath, remote, selectedRemote]);
-  useEffect(() => { const close = () => { setCtx(null); setSftpCtx(null); }; const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); }; window.addEventListener('click', close); window.addEventListener('keydown', esc); return () => { window.removeEventListener('click', close); window.removeEventListener('keydown', esc); }; }, []);
+  useEffect(() => { const close = () => { setCtx(null); setSftpCtx(null); setTermCtx(null); }; const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); }; window.addEventListener('click', close); window.addEventListener('keydown', esc); return () => { window.removeEventListener('click', close); window.removeEventListener('keydown', esc); }; }, []);
   useEffect(() => { localStorage.setItem('sshv.sidebarCollapsed', sidebarCollapsed ? '1' : '0'); }, [sidebarCollapsed]);
+  useEffect(() => { if (view === 'rdp' && activeRdp) { scheduleRDPResizeReconnect('active-rdp'); window.setTimeout(() => rdpCanvases.current[activeRdp]?.focus(), 80); } }, [view, activeRdp, sidebarCollapsed]);
   useEffect(() => {
     localStorage.setItem('sshv.theme', theme);
     const nextTheme = terminalTheme(theme);
     Object.values(terms.current).forEach(({term}) => { term.options.theme = nextTheme; term.refresh(0, term.rows - 1); });
   }, [theme]);
   useEffect(() => {
-    const onResize = () => Object.keys(terms.current).forEach(id => scheduleTerminalFit(id, id === activeSession, 'window-resize'));
+    const onResize = () => { Object.keys(terms.current).forEach(id => scheduleTerminalFit(id, id === activeSession, 'window-resize')); scheduleRDPResizeReconnect('window-resize'); };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, [activeSession]);
@@ -381,6 +470,9 @@ function App() {
     };
     void load();
   }, [sftpProps?.entry.path, sftpProps?.side, sftpId]);
+  useEffect(() => {
+    try { localStorage.setItem(visibleTagsStorageKey, JSON.stringify(visibleTags)); } catch {}
+  }, [visibleTags]);
   useEffect(() => {
     if (!syncReady(syncCfg, syncPass)) return;
     const id = window.setInterval(() => autoSync('interval'), 60000);
@@ -432,6 +524,7 @@ function App() {
       if (existing.altRefreshTimer) window.clearTimeout(existing.altRefreshTimer);
       if (existing.seqGapTimer) window.clearTimeout(existing.seqGapTimer);
       try { existing.resizeObserver?.disconnect(); } catch {}
+      if (existing.contextMenuHandler) existing.el.removeEventListener('contextmenu', existing.contextMenuHandler, {capture:true});
       try { existing.term.dispose(); } catch {}
       delete terms.current[id];
       el.innerHTML = '';
@@ -439,7 +532,9 @@ function App() {
     const fit = new FitAddon();
     const term = new Terminal({ cursorBlink: true, fontFamily: 'JetBrains Mono, Consolas, monospace', fontSize: 13, lineHeight: 1, letterSpacing: 0, customGlyphs: false, theme: terminalTheme(theme) });
     term.loadAddon(fit); term.open(el); term.onData(d => API.WriteSSH(id, d));
-    const rec: TerminalRecord = { term, fit, el, expectedSeq: 1, seqBuffer: {} };
+    const contextMenuHandler = (e: globalThis.MouseEvent) => openTerminalMenu(e, id);
+    el.addEventListener('contextmenu', contextMenuHandler, {capture:true});
+    const rec: TerminalRecord = { term, fit, el, expectedSeq: 1, seqBuffer: {}, contextMenuHandler };
     terms.current[id] = rec;
     const pending = pendingTermBuffers.current[id] || [];
     pending.sort((a, b) => a.seq - b.seq).forEach(p => writeSSHPayload(id, p.seq, p.data));
@@ -462,15 +557,48 @@ function App() {
     if (rec?.altRefreshTimer) window.clearTimeout(rec.altRefreshTimer);
     if (rec?.seqGapTimer) window.clearTimeout(rec.seqGapTimer);
     try { rec?.resizeObserver?.disconnect(); } catch {}
+    if (rec?.contextMenuHandler) rec.el.removeEventListener('contextmenu', rec.contextMenuHandler, {capture:true});
     try { terms.current[id]?.term.dispose(); } catch {}
     delete terms.current[id];
     delete pendingTermBuffers.current[id];
+    setTermCtx(prev => prev?.sessionId === id ? null : prev);
     setSessions(prev => { const next = prev.filter(s => s.id !== id); if (activeSession === id) setActiveSession(next[0]?.id || ''); return next; });
     setMsg('Terminal-Sitzung geschlossen');
   }
 
+  function openTerminalMenu(e: MouseEvent<HTMLDivElement> | globalThis.MouseEvent, sessionId: string) {
+    e.preventDefault(); e.stopPropagation();
+    terms.current[sessionId]?.term.focus();
+    setCtx(null); setSftpCtx(null);
+    const menuW = 180, menuH = 128;
+    setTermCtx({x:Math.max(8, Math.min(e.clientX, window.innerWidth - menuW)), y:Math.max(8, Math.min(e.clientY, window.innerHeight - menuH)), sessionId});
+  }
+  async function copyTerminalSelection(sessionId: string) {
+    try {
+      const selection = terms.current[sessionId]?.term.getSelection() || '';
+      if (!selection) { setMsg('Keine Terminal-Auswahl zum Kopieren.'); return; }
+      await navigator.clipboard.writeText(selection);
+      setTermCtx(null);
+      setMsg('Terminal-Auswahl kopiert');
+    } catch (e) { setMsg('Kopieren fehlgeschlagen: ' + cleanError(e)); }
+  }
+  async function pasteTerminalClipboard(sessionId: string) {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) { setMsg('Zwischenablage ist leer.'); return; }
+      await API.WriteSSH(sessionId, text);
+      setTermCtx(null);
+      setMsg('In Terminal eingefügt');
+    } catch (e) { setMsg('Einfügen fehlgeschlagen: ' + cleanError(e)); }
+  }
+
   function beginNewHost() { setDraft(emptyHost); setSelected(''); setEditing(true); setView('terminal'); }
-  function beginEditHost(id = selected) { const h = hosts.find(x => x.id === id); if (h) { setSelected(h.id); setDraft({...h, tags:[...(h.tags||[])]}); setEditing(true); setCtx(null); } }
+  function beginEditHost(id = selected) { const h = hosts.find(x => x.id === id); if (h) { setSelected(h.id); setDraft({...h, protocol: hostProtocol(h), tags:[...(h.tags||[])]} as any); setEditing(true); setCtx(null); } }
+  function setDraftProtocol(protocol: 'ssh'|'rdp') {
+    setDraft(prev => protocol === 'rdp'
+      ? ({...prev, protocol:'rdp', rdpEnabled:true, rdpPort:(prev as any).rdpPort || 3389, rdpUsername:(prev as any).rdpUsername || prev.username || '', rdpWidth:(prev as any).rdpWidth || 1280, rdpHeight:(prev as any).rdpHeight || 800, port: prev.port === 22 ? 22 : prev.port} as any)
+      : ({...prev, protocol:'ssh', rdpEnabled:false, rdpPort:0, rdpUsername:'', rdpPassword:'', rdpDomain:'', rdpWidth:0, rdpHeight:0, port: prev.port && prev.port !== 3389 ? prev.port : 22} as any));
+  }
   function editTags(id = selected) { beginEditHost(id); setMsg('Tags im Host-Editor bearbeiten.'); }
   function hostContext(e: MouseEvent, h: HostConfig) { e.preventDefault(); e.stopPropagation(); setSftpCtx(null); setSelected(h.id); closeHostEditor(); setCtx({x:e.clientX,y:e.clientY,host:h}); }
   async function connectSSHHost(id = selected) { setSelected(id); setCtx(null); return connectSSH(id); }
@@ -481,7 +609,11 @@ function App() {
     setSelected(id); setCtx(null); const h = await API.DeleteHost(id); setHosts(h); setSelected(h[0]?.id || ''); closeHostEditor(); setMsg('Host gelöscht'); void autoSync('host deleted');
   }
   async function saveHost() {
-    const next = {...draft, port: Number(draft.port || 22), tags: String((draft as any).tagsText ?? draft.tags?.join(',') ?? '').split(',').map(x => x.trim()).filter(Boolean)};
+    const protocol = hostProtocol(draft);
+    const tags = String((draft as any).tagsText ?? draft.tags?.join(',') ?? '').split(',').map(x => x.trim()).filter(Boolean);
+    const next = protocol === 'rdp'
+      ? ({...draft, protocol:'rdp', rdpEnabled:true, rdpPort:Number((draft as any).rdpPort || 3389), rdpWidth:Number((draft as any).rdpWidth || 1280), rdpHeight:Number((draft as any).rdpHeight || 800), rdpScaleMode:rdpScaleModeOf(draft), port:Number(draft.port || 22), authMode:draft.authMode || 'agent', tags} as any)
+      : ({...draft, protocol:'ssh', rdpEnabled:false, rdpPort:0, rdpUsername:'', rdpPassword:'', rdpDomain:'', rdpWidth:0, rdpHeight:0, rdpScaleMode:'smart', port:Number(draft.port || 22), tags} as any);
     const h = await API.SaveHost(next as HostConfig); setHosts(h); setSelected(next.id || h[h.length - 1]?.id || ''); closeHostEditor(); setMsg('Host gespeichert'); void autoSync('host saved');
   }
   async function delHost() { if (!selected) return; return deleteHost(selected); }
@@ -523,6 +655,307 @@ Pfad: ${path || knownHosts.path || 'known_hosts'}`);
       } catch(e2) { setMsg('SSH Fehler: ' + cleanError(e2)); }
     }
     finally { setConnectingSSH(false); }
+  }
+
+  function closeRDPRenderStream(id: string) {
+    try { rdpRenderStreams.current[id]?.close(); } catch {}
+    delete rdpRenderStreams.current[id];
+    if (rdpRenderFrameRAF.current[id]) window.cancelAnimationFrame(rdpRenderFrameRAF.current[id]);
+    delete rdpRenderFrameRAF.current[id];
+    delete rdpRenderFrameQueues.current[id];
+    try { rdpRenderers.current[id]?.dispose(); } catch {}
+    delete rdpRenderers.current[id];
+  }
+  async function startRDPRenderStream(id: string, canvas: HTMLCanvasElement) {
+    closeRDPRenderStream(id);
+    let renderer: RDPWebGLRenderer;
+    try {
+      renderer = new RDPWebGLRenderer(canvas);
+    } catch(e) {
+      setMsg('RDP WebGL Fehler: ' + cleanError(e));
+      return;
+    }
+    rdpRenderers.current[id] = renderer;
+    const session = rdpSessions.find(s => s.id === id);
+    const host = hosts.find(h => h.id === session?.hostId);
+    renderer.setSharp(rdpScaleModeOf(host) === 'sharp' || rdpScaleModeOf(host) === 'original');
+    try {
+      const endpoint = await API.RDPRenderEndpoint(id);
+      const ws = new WebSocket(endpoint.url);
+      ws.binaryType = 'arraybuffer';
+      ws.onmessage = ev => {
+        try {
+          if (rdpRenderStreams.current[id] !== ws) return;
+          const frame = parseRDPBinaryFrame(ev.data as ArrayBuffer);
+          const q = rdpRenderFrameQueues.current[id] || [];
+          if (isFullRDPFrame(frame)) {
+            rdpRenderFrameQueues.current[id] = [frame];
+          } else {
+            q.push(frame);
+            const lastFull = lastFullRDPFrameIndex(q);
+            rdpRenderFrameQueues.current[id] = lastFull >= 0 ? q.slice(lastFull) : q;
+          }
+          if (!rdpRenderFrameRAF.current[id]) {
+            rdpRenderFrameRAF.current[id] = window.requestAnimationFrame(() => {
+              delete rdpRenderFrameRAF.current[id];
+              const frames = rdpRenderFrameQueues.current[id] || [];
+              rdpRenderFrameQueues.current[id] = [];
+              const lastFull = lastFullRDPFrameIndex(frames);
+              const renderFrames = lastFull >= 0 ? frames.slice(lastFull) : frames;
+              renderer.presentBatch(renderFrames);
+            });
+          }
+        }
+        catch(e) { setMsg('RDP Render Fehler: ' + cleanError(e)); }
+      };
+      ws.onerror = () => setMsg('RDP Render-Stream Fehler');
+      ws.onclose = () => { if (rdpRenderStreams.current[id] === ws) delete rdpRenderStreams.current[id]; };
+      rdpRenderStreams.current[id] = ws;
+    } catch(e) {
+      closeRDPRenderStream(id);
+      setMsg('RDP Render-Endpunkt Fehler: ' + cleanError(e));
+    }
+  }
+  function attachRDPCanvas(id: string, el: HTMLCanvasElement | null) {
+    if (!el) return;
+    rdpCanvases.current[id] = el;
+    el.tabIndex = 0;
+    if (!rdpRenderStreams.current[id] && !rdpRenderers.current[id]) void startRDPRenderStream(id, el);
+  }
+  function attachRDPWrap(id: string, el: HTMLDivElement | null) {
+    if (!el) {
+      delete rdpWraps.current[id];
+      try { rdpWrapObservers.current[id]?.disconnect(); } catch {}
+      delete rdpWrapObservers.current[id];
+      return;
+    }
+    rdpWraps.current[id] = el;
+    if (!rdpWrapObservers.current[id]) {
+      const observer = new ResizeObserver(() => scheduleRDPResizeReconnect('pane-resize'));
+      observer.observe(el);
+      rdpWrapObservers.current[id] = observer;
+    }
+  }
+  function rdpViewerSize(host?: HostConfig): {width:number; height:number} {
+    const activeWrap = activeRdp ? rdpWraps.current[activeRdp] : undefined;
+    const fallback = document.querySelector('.workspace') as HTMLElement | null;
+    const box = activeWrap || fallback;
+    const rect = box?.getBoundingClientRect();
+    const rawW = Math.floor((rect?.width || Number((host as any)?.rdpWidth || 1280)) - (activeWrap ? 2 : 24));
+    const rawH = Math.floor((rect?.height || Number((host as any)?.rdpHeight || 800)) - (activeWrap ? 2 : 88));
+    const width = Math.max(640, Math.min(3840, rawW));
+    const height = Math.max(480, Math.min(2160, rawH));
+    return {width, height};
+  }
+  function scheduleRDPResizeReconnect(reason = 'resize') {
+    if (view !== 'rdp' || !activeRdp) return;
+    const session = rdpSessions.find(x => x.id === activeRdp);
+    if (!session || session.status !== 'connected') return;
+    const host = hosts.find(x => x.id === session.hostId);
+    const scaleMode = rdpScaleModeOf(host);
+    if (scaleMode === 'fit' || scaleMode === 'original') return;
+    if (rdpResizeTimer.current) window.clearTimeout(rdpResizeTimer.current);
+    rdpResizeTimer.current = window.setTimeout(async () => {
+      const current = rdpSessions.find(x => x.id === activeRdp);
+      if (!current || current.status !== 'connected') return;
+      const host = hosts.find(x => x.id === current.hostId);
+      const size = rdpViewerSize(host);
+      const nextKey = `${size.width}x${size.height}`;
+      const oldKey = rdpConnectSizes.current[current.id];
+      const [oldW, oldH] = (oldKey || '').split('x').map(Number);
+      if (oldKey && Math.abs((oldW || 0) - size.width) < 48 && Math.abs((oldH || 0) - size.height) < 48) return;
+      try {
+        setMsg(`RDP passt Auflösung an: ${size.width}×${size.height}`);
+        await API.CloseRDP(current.id);
+        delete rdpCanvases.current[current.id];
+        closeRDPRenderStream(current.id);
+        delete rdpConnectSizes.current[current.id];
+        setRdpSessions(prev => prev.filter(x => x.id !== current.id));
+        const st = await API.ConnectRDP(current.hostId, size.width, size.height);
+        rdpConnectSizes.current[st.id] = nextKey;
+        setRdpSessions(prev => [...prev.filter(x => x.id !== current.id), st]);
+        setActiveRdp(st.id);
+        setMsg(`RDP-Auflösung angepasst (${size.width}×${size.height})`);
+      } catch(e) {
+        setMsg('RDP Resize Fehler: '+cleanError(e));
+      }
+    }, reason === 'window-resize' ? 700 : 500);
+  }
+  const rdpPoint = (canvas: HTMLCanvasElement, e: {clientX:number; clientY:number}) => {
+    const r = canvas.getBoundingClientRect();
+    const x = Math.max(0, Math.min(canvas.width, Math.round((e.clientX - r.left) * (canvas.width / Math.max(1, r.width)))));
+    const y = Math.max(0, Math.min(canvas.height, Math.round((e.clientY - r.top) * (canvas.height / Math.max(1, r.height)))));
+    return {x,y};
+  };
+  async function connectRDP(hostID = selected) {
+    if (!hostID) { setMsg('Kein Host ausgewählt'); return; }
+    if (rdpOpeningHosts.current.has(hostID)) return;
+    if (connectingRDP) return;
+    rdpOpeningHosts.current.add(hostID);
+    setConnectingRDP(true); setView('rdp'); setMsg('RDP verbindet…');
+    try {
+      const h = hosts.find(x => x.id === hostID);
+      const existing = rdpSessions.find(x => x.hostId === hostID);
+      if (existing) await closeRDP(existing.id);
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      const scaleMode = rdpScaleModeOf(h);
+      const size = (scaleMode === 'fit' || scaleMode === 'original') ? {width:Number((h as any)?.rdpWidth || 1280), height:Number((h as any)?.rdpHeight || 800)} : rdpViewerSize(h);
+      const st = await API.ConnectRDP(hostID, size.width, size.height);
+      rdpConnectSizes.current[st.id] = `${size.width}x${size.height}`;
+      setRdpSessions(prev => prev.some(x=>x.id===st.id) ? prev : [...prev, st]);
+      setActiveRdp(st.id); setMsg('RDP-Verbindung gestartet');
+    } catch(e) { setMsg('RDP Fehler: '+cleanError(e)); }
+    finally { rdpOpeningHosts.current.delete(hostID); setConnectingRDP(false); }
+  }
+  async function connectRDPHost(id = selected) { setSelected(id); setCtx(null); return connectRDP(id); }
+  function dropRDPClientSession(id: string) {
+    if (rdpMouseMoves.current[id]?.frame) cancelAnimationFrame(rdpMouseMoves.current[id].frame!);
+    if (rdpMouseMoves.current[id]?.timer) window.clearTimeout(rdpMouseMoves.current[id].timer!);
+    delete rdpCanvases.current[id];
+    closeRDPRenderStream(id);
+    delete rdpMouseMoves.current[id];
+    delete rdpPressedKeys.current[id];
+    delete rdpSuppressedKeyUps.current[id];
+    delete rdpConnectSizes.current[id];
+    try { rdpWrapObservers.current[id]?.disconnect(); } catch {}
+    delete rdpWrapObservers.current[id];
+    delete rdpWraps.current[id];
+    setRdpSessions(prev => { const next = prev.filter(s => s.id !== id); setActiveRdp(current => current === id ? (next[0]?.id || '') : current); return next; });
+  }
+  async function closeRDP(id: string, e?: MouseEvent) {
+    e?.preventDefault(); e?.stopPropagation();
+    try { await API.CloseRDP(id); } catch {}
+    dropRDPClientSession(id);
+    setMsg('RDP-Sitzung geschlossen');
+  }
+  function rdpMissingOrSet(prefix: string, id: string, e: unknown) {
+    const err = cleanError(e);
+    if (err.includes('RDP-Session nicht gefunden')) { dropRDPClientSession(id); setMsg('RDP-Sitzung nicht mehr aktiv'); return; }
+    setMsg(prefix + err);
+  }
+  function rdpMouse(id: string, action: string, ev: MouseEvent<HTMLCanvasElement>, delta = 0) {
+    const p = rdpPoint(ev.currentTarget, ev);
+    if (action === 'rightdown') void prepareRDPClipboardText(id).catch(()=>{});
+    void API.RDPMouse(id, action, p.x, p.y, delta).catch(e=>rdpMissingOrSet('RDP Maus: ', id, e));
+  }
+  function rdpMouseMove(id: string, ev: MouseEvent<HTMLCanvasElement>) {
+    const p = rdpPoint(ev.currentTarget, ev);
+    const rec = rdpMouseMoves.current[id] || {x:p.x, y:p.y};
+    rec.x = p.x;
+    rec.y = p.y;
+    rdpMouseMoves.current[id] = rec;
+    if (rec.frame) return;
+    const now = performance.now();
+    const wait = Math.max(0, 16 - (now - (rec.lastSent || 0)));
+    const send = () => {
+      rec.frame = undefined;
+      rec.timer = undefined;
+      rec.lastSent = performance.now();
+      API.RDPMouse(id, 'move', rec.x, rec.y, 0).catch(e=>rdpMissingOrSet('RDP Maus: ', id, e));
+    };
+    if (wait > 0) {
+      if (!rec.timer) rec.timer = window.setTimeout(() => { rec.timer = undefined; rec.frame = requestAnimationFrame(send); }, wait);
+    } else {
+      rec.frame = requestAnimationFrame(send);
+    }
+  }
+  const fileToBase64 = async (file: File): Promise<string> => {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    return window.btoa(out);
+  };
+  async function stageRDPClipboardFiles(id: string, filesLike: FileList | File[] | ExternalDropItem[]) {
+    const raw: any[] = [];
+    const list = filesLike as any;
+    for (let i = 0; i < (list?.length || 0); i++) raw.push(list[i]);
+    const files: ExternalDropItem[] = raw.map((item: any) => {
+      if (item?.kind) return item as ExternalDropItem;
+      const file = item as File;
+      return {relPath: cleanRemoteRel((file as any).webkitRelativePath || file.name || 'clipboard-file'), file, kind:'file' as const};
+    }).filter(f => f.kind === 'directory' || (!!f.file && f.file.size >= 0));
+    if (!files.length) return false;
+    const total = files.reduce((sum, f) => sum + (f.file?.size || 0), 0);
+    if (files.length > 512) throw new Error('RDP-Dateiablage: maximal 512 Einträge.');
+    if (total > 128 * 1024 * 1024) throw new Error('RDP-Dateiablage: maximal 128 MB.');
+    const payload: {name:string; base64:string; isDirectory?:boolean}[] = [];
+    for (const f of files) {
+      if (f.kind === 'directory') payload.push({name: f.relPath || 'Ordner', base64: '', isDirectory: true});
+      else if (f.file) payload.push({name: f.relPath || f.file.name || 'clipboard-file', base64: await fileToBase64(f.file)});
+    }
+    await API.RDPStageClipboardFiles(id, payload);
+    setMsg(`${files.length} Element(e) werden per RDP eingefügt…`);
+    return true;
+  }
+  async function collectRDPClipboardFiles(dt: DataTransfer): Promise<ExternalDropItem[]> {
+    const items = await collectExternalDropFiles(dt);
+    return items.filter(f => f.kind === 'directory' || !!f.file);
+  }
+  async function prepareRDPClipboardText(id: string, text?: string) {
+    let payload = typeof text === 'string' ? text : '';
+    if (!payload) {
+      try { payload = await navigator.clipboard.readText(); } catch {}
+    }
+    if (!payload) {
+      payload = await API.RDPClipboardText();
+    }
+    if (!payload) return false;
+    await API.RDPStageClipboardText(id, payload);
+    return true;
+  }
+  async function sendRDPRemotePasteShortcut(id: string, keyCode = 'KeyV') {
+    await API.RDPKey(id, 'ControlLeft', true);
+    await API.RDPKey(id, keyCode, true);
+    await API.RDPKey(id, keyCode, false);
+    await API.RDPKey(id, 'ControlLeft', false);
+  }
+  async function pasteRDPText(id: string, text?: string) {
+    const staged = await prepareRDPClipboardText(id, text);
+    if (!staged) return;
+    await sendRDPRemotePasteShortcut(id);
+    setMsg('RDP-Clipboard bereitgestellt und Remote-Einfügen gesendet');
+  }
+  function rdpPaste(id: string, ev: ReactClipboardEvent<HTMLCanvasElement>) {
+    ev.preventDefault(); ev.stopPropagation();
+    const files = ev.clipboardData.files;
+    if (files && files.length) {
+      void (async () => { if (await stageRDPClipboardFiles(id, files)) await sendRDPRemotePasteShortcut(id); })().catch(e=>rdpMissingOrSet('RDP Datei-Paste: ', id, e));
+      return;
+    }
+    const text = ev.clipboardData.getData('text/plain');
+    void pasteRDPText(id, text).catch(e=>rdpMissingOrSet('RDP Paste: ', id, e));
+  }
+  function rdpFileDrop(id: string, ev: DragEvent<HTMLCanvasElement>) {
+    ev.preventDefault(); ev.stopPropagation();
+    if (!ev.dataTransfer) return;
+    void (async () => { const files = await collectRDPClipboardFiles(ev.dataTransfer); if (await stageRDPClipboardFiles(id, files)) await sendRDPRemotePasteShortcut(id); })().catch(e=>rdpMissingOrSet('RDP Datei-Drop: ', id, e));
+  }
+  function rdpKey(id: string, ev: ReactKeyboardEvent<HTMLCanvasElement>, down: boolean) {
+    ev.preventDefault(); ev.stopPropagation();
+    const pressed = rdpPressedKeys.current[id] || new Set<string>();
+    rdpPressedKeys.current[id] = pressed;
+    const suppressed = rdpSuppressedKeyUps.current[id] || new Set<string>();
+    rdpSuppressedKeyUps.current[id] = suppressed;
+    if (!down && suppressed.has(ev.code)) {
+      suppressed.delete(ev.code);
+      pressed.delete(ev.code);
+      return;
+    }
+    if (down) pressed.add(ev.code); else pressed.delete(ev.code);
+    if (down && (ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'v') {
+      suppressed.add(ev.code);
+      void (async () => {
+        const staged = await prepareRDPClipboardText(id);
+        if (!staged) return;
+        await API.RDPKey(id, ev.code, true);
+        await API.RDPKey(id, ev.code, false);
+        setMsg('RDP-Clipboard bereitgestellt und Remote-Einfügen gesendet');
+      })().catch(e=>rdpMissingOrSet('RDP Paste: ', id, e));
+      return;
+    }
+    void API.RDPKey(id, ev.code, down).catch(e=>rdpMissingOrSet('RDP Tastatur: ', id, e));
   }
   function resetSFTPState() {
     setSftpId(''); setActiveSftp(''); setRemote([]); setRemotePath('/'); setSelectedRemote(''); setSftpCtx(null); setSftpProps(null);
@@ -791,7 +1224,7 @@ Pfad: ${path || knownHosts.path || 'known_hosts'}`);
   }
 
   function clearDraftSecrets() {
-    setDraft(prev => ({...prev, password:'', privateKey:''}));
+    setDraft(prev => ({...prev, password:'', privateKey:'', rdpPassword:''} as any));
     setVaultDraft(prev => ({...prev, password:'', privateKey:''}));
   }
   function clearFileEditorSecrets() {
@@ -925,12 +1358,15 @@ Pfad: ${path || knownHosts.path || 'known_hosts'}`);
     catch(e) { setLocalVaultMsg(cleanError(e)); }
   }
   function openLocalVaultSettings() { setView('settings'); setShowLocalVaultPrompt(false); setTimeout(() => localVaultSettingsRef.current?.scrollIntoView({ behavior:'smooth', block:'start' }), 60); }
+  function openLocalVaultUnlock() { setSidebarCollapsed(false); closeHostEditor(); setView('settings'); setShowLocalVaultPrompt(true); setTimeout(() => localVaultSettingsRef.current?.scrollIntoView({ behavior:'smooth', block:'start' }), 60); }
   const renderSyncNotice = () => <div className={`notice notice-${syncNotice.kind}`}>
     <div className="noticeBody"><div className="noticeIcon" aria-hidden="true">{syncNotice.kind === 'success' ? '✓' : syncNotice.kind === 'warning' ? '!' : syncNotice.kind === 'error' ? '×' : 'i'}</div><div><div className="noticeTitle">{syncNotice.title}</div><p>{syncNotice.message}</p></div></div>
-    {syncNotice.action === 'unlockVault' && <div className="noticeActions"><button className="primary" onClick={openLocalVaultSettings}>Datensafe entsperren</button></div>}
+    {syncNotice.action === 'unlockVault' && <div className="noticeActions"><button className="primary" onClick={openLocalVaultUnlock}>Datensafe entsperren</button></div>}
     {syncNotice.details && <details className="noticeDetails"><summary>Technische Details</summary><code>{syncNotice.details}</code></details>}
   </div>;
   function openUpdateSettings() { setWorkspaceView('settings'); closeHostEditor(); setSidebarCollapsed(false); setTimeout(() => updateSettingsRef.current?.scrollIntoView({ behavior:'smooth', block:'start' }), 60); }
+  function openSyncSettings() { setWorkspaceView('settings'); closeHostEditor(); setSidebarCollapsed(false); setShowLocalVaultPrompt(false); setTimeout(() => (syncActionsRef.current || syncSettingsRef.current)?.scrollIntoView({ behavior:'smooth', block:'center' }), 60); }
+  function handleSyncFooterClick() { if (syncFooterState === 'locked') openLocalVaultUnlock(); else openSyncSettings(); }
   const accountWebURL = () => `${normalizeEndpoint(accountLogin.endpoint)}/account`;
   function openAccountWeb() {
     if (!validSyncEndpoint(accountLogin.endpoint)) { setSyncMsg('Sync-Server muss HTTPS nutzen (HTTP nur localhost/127.0.0.1).'); return; }
@@ -1002,13 +1438,14 @@ Pfad: ${path || knownHosts.path || 'known_hosts'}`);
     finally { setTransferPass(''); }
   }
   async function saveSync(runAuto = true) { try { if (!validSyncEndpoint(syncCfg.endpoint || defaultSyncServer)) throw new Error('Sync-Server muss HTTPS nutzen (HTTP nur localhost/127.0.0.1).'); const c = await API.SaveSyncConfig({...syncCfg, autoPassphrase: syncPass} as any); syncCfgRef.current = c; setSyncCfg(c); setSyncMsg(c.enabled ? 'Auto-Sync gespeichert. Server speichert nur verschlüsselte Daten.' : 'Sync deaktiviert. Alles bleibt lokal.'); if (runAuto && syncReady(c, syncPass)) void autoSync('enabled'); return c; } catch(e) { setSyncMsg(cleanError(e)); } }
-  async function pushSync() { try { const c = await saveSync(false); if (!syncReady(c || syncCfg, syncPass)) throw new Error(syncNotReadyText(c || syncCfg, syncPass)); const r = await API.SyncPush(syncPass); setSyncMsg(`${r.message}: ${r.count} Hosts · ${(r as any).vaultCount || 0} Tresor-Einträge`); } catch(e) { setSyncMsg(cleanError(e)); } }
-  async function pullSync() { try { const c = await saveSync(false); if (!syncReady(c || syncCfg, syncPass)) throw new Error(syncNotReadyText(c || syncCfg, syncPass)); const r = await API.SyncPull(syncPass); setSyncMsg(`${r.message}: ${r.count} Hosts · ${(r as any).vaultCount || 0} Tresor-Einträge`); await reloadHosts(); await reloadVault(); } catch(e) { setSyncMsg(cleanError(e)); } }
+  async function pushSync() { setSyncRunning(true); try { const c = await saveSync(false); if (!syncReady(c || syncCfg, syncPass)) throw new Error(syncNotReadyText(c || syncCfg, syncPass)); const r = await API.SyncPush(syncPass); setSyncMsg(`${r.message}: ${r.count} Hosts · ${(r as any).vaultCount || 0} Tresor-Einträge`); } catch(e) { setSyncMsg(cleanError(e)); } finally { setSyncRunning(false); } }
+  async function pullSync() { setSyncRunning(true); try { const c = await saveSync(false); if (!syncReady(c || syncCfg, syncPass)) throw new Error(syncNotReadyText(c || syncCfg, syncPass)); const r = await API.SyncPull(syncPass); setSyncMsg(`${r.message}: ${r.count} Hosts · ${(r as any).vaultCount || 0} Tresor-Einträge`); await reloadHosts(); await reloadVault(); } catch(e) { setSyncMsg(cleanError(e)); } finally { setSyncRunning(false); } }
   async function autoSync(reason: string) {
     const cfg = syncCfgRef.current;
     const pass = syncPassRef.current;
     if (autoSyncBusy.current || !syncReady(cfg, pass)) return;
     autoSyncBusy.current = true;
+    setSyncRunning(true);
     try {
       const setupReason = reason === 'startup' || reason === 'enabled' || reason.startsWith('account-') || reason.startsWith('vault-');
       if (setupReason) {
@@ -1038,7 +1475,7 @@ Pfad: ${path || knownHosts.path || 'known_hosts'}`);
       setSyncMsg(`Auto-Sync Upload OK (${reason}): ${r.count} Hosts · ${(r as any).vaultCount || 0} Tresor-Einträge`);
     }
     catch(e) { setSyncNotice(friendlySyncError(e, reason)); }
-    finally { autoSyncBusy.current = false; }
+    finally { autoSyncBusy.current = false; setSyncRunning(false); }
   }
 
   const selHost = hosts.find(h => h.id === selected);
@@ -1065,40 +1502,65 @@ Pfad: ${path || knownHosts.path || 'known_hosts'}`);
     </div></div>}
     <aside className={sidebarCollapsed ? 'sidebar collapsed' : 'sidebar'}>
       <div className="brandRow"><div className="brand"><img className="brandIcon" src="/ssh-vault2.png" alt="ssh-vault2"/><div><b>ssh-vault2</b><span>SSH/SFTP Workspace</span></div></div><button className="sidebarToggle" title={sidebarCollapsed ? 'Hostmenü ausklappen' : 'Hostmenü einklappen'} onClick={()=>setSidebarCollapsed(!sidebarCollapsed)}>{sidebarCollapsed ? '›' : '‹'}</button></div>
-      {!sidebarCollapsed && <button className="sideButton newHostButton" onClick={beginNewHost}>+ Host</button>}
-      {!sidebarCollapsed && <div className="hosts">{hosts.map(h => <button key={h.id} className={h.id===selected?'sideButton host active':'sideButton host'} onClick={() => { setSelected(h.id); closeHostEditor(); }} onDoubleClick={() => connectSSHHost(h.id)} onContextMenu={e=>hostContext(e,h)}><b>{h.name}</b><span>{h.username}@{h.address}:{h.port}</span><em>{(h.tags||[]).join(' · ')}</em></button>)}</div>}
+      {!sidebarCollapsed && <div className="hostAddRow"><button className="sideButton newHostButton" onClick={beginNewHost}>+ Host</button><div className="hostFilter"><button className="hostFilterButton sideButton" onClick={()=>setTagFilterOpen(!tagFilterOpen)} title="Hosts nach Tags filtern" aria-label={`Tags anzeigen${visibleTags.length ? ` (${visibleTags.length} aktiv)` : ' (alle)'}`}> <svg className="filterIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16l-6.2 7.1v4.2l-3.6 1.8v-6L4 6z"/></svg>{(visibleTags.length > 0 || hiddenHostCount > 0) && <span className="filterBadge">{visibleTags.length || hiddenHostCount}</span>}</button>{tagFilterOpen && <div className="tagFilterMenu">
+        <div className="tagFilterTitle"><b>Tags anzeigen</b><button onClick={()=>setTagFilterOpen(false)}>×</button></div>
+        <div className="tagFilterActions"><button onClick={setAllTagsVisible}>Alle anzeigen</button><button onClick={()=>setVisibleTags([])}>Zurücksetzen</button></div>
+        {availableHostTags.length===0 && <p>Keine Tags vorhanden.</p>}
+        {availableHostTags.map(tag => <label key={tag} className="tagFilterOption"><input type="checkbox" checked={visibleTags.length===0 || visibleTags.includes(tag)} onChange={()=>toggleVisibleTag(tag)}/><span>{tag}</span></label>)}
+      </div>}</div></div>}
+      {!sidebarCollapsed && <div className="hosts">{filteredHosts.map(h => <button key={h.id} className={h.id===selected?'sideButton host active':'sideButton host'} onClick={() => { setSelected(h.id); closeHostEditor(); }} onDoubleClick={() => hostProtocol(h) === 'rdp' ? connectRDPHost(h.id) : connectSSHHost(h.id)} onContextMenu={e=>hostContext(e,h)}><b>{h.name}</b><span>{hostProtocol(h).toUpperCase()} · {hostUserLabel(h)}@{h.address}:{hostPortLabel(h)}</span><em>{(h.tags||[]).join(' · ')}</em></button>)}{filteredHosts.length===0 && <div className="empty hostFilterEmpty">Keine Hosts für diese Tags.</div>}</div>}
       {sidebarCollapsed && <div className="collapsedRail"><button title="Hostmenü öffnen" onClick={()=>setSidebarCollapsed(false)}>☰</button><button title="Neuer Host" onClick={()=>{setSidebarCollapsed(false); beginNewHost();}}>＋</button><button className="settingsGear compact" title="Einstellungen" onClick={()=>{setSidebarCollapsed(false); setWorkspaceView('settings'); closeHostEditor();}}><span>⚙</span></button></div>}
-      {!sidebarCollapsed && <div className="sidebarFooter"><button className="settingsGear" title="Einstellungen" onClick={()=>{setWorkspaceView('settings'); closeHostEditor();}}><span>⚙</span><b>Einstellungen</b></button><button className="versionMeta" title={`${info?.platform || 'desktop'} · v${info?.version || ''} · Updates öffnen`} onClick={openUpdateSettings}><span>v{info?.version}</span><em className={`updateBadge ${updateStatus}`}>{updateStatus==='checking' ? 'prüft…' : updateStatus==='available' ? `v${updateAvailableVersion}` : updateStatus==='error' ? 'Update?' : 'aktuell'}</em></button></div>}
+      {!sidebarCollapsed && <div className="sidebarFooter"><button className="settingsGear" title="Einstellungen" onClick={()=>{setWorkspaceView('settings'); closeHostEditor();}}><span>⚙</span><b>Einstellungen</b></button><div className="footerSyncCluster"><button className="versionMeta" title={`${info?.platform || 'desktop'} · v${info?.version || ''}${updateStatus==='available' && updateAvailableVersion ? ` · Update ${updateAvailableVersion}` : ''} · Updates öffnen`} onClick={openUpdateSettings}><span>v{info?.version}</span><em className={`updateBadge ${updateStatus}`}>{updateStatus==='checking' ? '↻' : updateStatus==='available' ? 'neu' : updateStatus==='error' ? '!' : '✓'}</em></button><button className={`syncFooterButton ${syncFooterState}`} title={syncFooterTitle} aria-label={syncFooterTitle} onClick={handleSyncFooterClick}>{syncFooterState === 'locked' ? <span className="syncLockIcon" aria-hidden="true"></span> : <span className="syncCompositeIcon"><svg className="syncGlyph" viewBox="0 0 40 40" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><circle className="syncGlyphRing" cx="20" cy="20" r="13"/><path className="syncGlyphHead" d="M33 7v8h-8"/><path className="syncGlyphHead" d="M7 33v-8h8"/><circle className="syncStatusDot" cx="20" cy="20" r="4.8"/></svg></span>}</button></div></div>}
       {ctx && <div className="contextMenu" style={{left:ctx.x, top:ctx.y}} onClick={e=>e.stopPropagation()}>
         <button onClick={()=>beginEditHost(ctx.host.id)}>Host bearbeiten</button>
         <button onClick={()=>editTags(ctx.host.id)}>Tag vergeben</button>
         <button onClick={()=>connectSSHHost(ctx.host.id)}>SSH verbinden</button>
         <button onClick={()=>connectSFTPHost(ctx.host.id)}>SFTP verbinden</button>
+        <button onClick={()=>connectRDPHost(ctx.host.id)}>RDP verbinden</button>
         <button className="danger" onClick={()=>deleteHost(ctx.host.id)}>Löschen</button>
       </div>}
     </aside>
     <section className="main">
       <header className="toolbar">
         <div><b>{selHost?.name || (editing ? 'Neuer Host' : 'Kein Host ausgewählt')}</b><span>{msg}</span></div>
-        <div className="actions"><button disabled={!selected} onClick={()=>beginEditHost()}>Host bearbeiten</button><button className="primary" disabled={connectingSSH||!selected} onClick={()=>connectSSH()}>{connectingSSH?'Verbinde…':'SSH verbinden'}</button><button disabled={connectingSFTP||!selected} onClick={()=>connectSFTP()}>{connectingSFTP?'Öffne…':'SFTP öffnen'}</button></div>
+        <div className="viewTabs" role="tablist"><button type="button" role="tab" data-view="terminal" className={view==='terminal'?'active':''} onClick={()=>setWorkspaceView('terminal')}>Terminal</button><button type="button" role="tab" data-view="sftp" className={view==='sftp'?'active':''} onClick={()=>setWorkspaceView('sftp')}>SFTP</button><button type="button" role="tab" data-view="rdp" className={view==='rdp'?'active':''} onClick={()=>setWorkspaceView('rdp')}>RDP</button><button type="button" role="tab" data-view="vault" className={view==='vault'?'active':''} onClick={()=>setWorkspaceView('vault')}>Vault</button></div>
       </header>
-      <div className="viewTabs" role="tablist"><button type="button" role="tab" data-view="terminal" className={view==='terminal'?'active':''} onClick={()=>setWorkspaceView('terminal')}>Terminal</button><button type="button" role="tab" data-view="sftp" className={view==='sftp'?'active':''} onClick={()=>setWorkspaceView('sftp')}>SFTP</button><button type="button" role="tab" data-view="vault" className={view==='vault'?'active':''} onClick={()=>setWorkspaceView('vault')}>Vault</button></div>
       <div className={editing ? 'content withEditor' : 'content'}>
         {editing && <div className="editor card">
           <h3>{draft.id ? 'Host bearbeiten' : 'Host anlegen'}</h3>
-          <input placeholder="Name" value={draft.name} onChange={e=>setDraft({...draft,name:e.target.value})}/>
-          <input placeholder="Adresse" value={draft.address} onChange={e=>setDraft({...draft,address:e.target.value})}/>
-          <div className="row"><input placeholder="Port" value={draft.port} onChange={e=>setDraft({...draft,port:Number(e.target.value)})}/><input placeholder="User" value={draft.username} onChange={e=>setDraft({...draft,username:e.target.value})}/></div>
-          <label className="editorLabel">Vault-Anmeldung<select value={(draft as any).vaultId || ''} onChange={e=>setDraft({...draft,vaultId:e.target.value} as any)}><option value="">Direkte Host-Anmeldung</option>{vault.map(v=><option key={v.id} value={v.id}>{v.name} · {v.username} · {v.authMode === 'key' ? 'SSH-Key' : 'Passwort'}</option>)}</select></label>
-          {(draft as any).vaultId && <p className="hint">Nutzt Vault: {vaultLabel((draft as any).vaultId)}. Direkte User/Passwort/Key-Felder bleiben als Fallback gespeichert.</p>}
-          <select value={draft.authMode} onChange={e=>setDraft({...draft,authMode:e.target.value})}><option value="key">Key</option><option value="password">Passwort</option><option value="agent">Agent</option></select>
-          <input placeholder="Key-Pfad" value={draft.keyPath || ''} onChange={e=>setDraft({...draft,keyPath:e.target.value})}/>
-          <input placeholder={draft.authMode === 'key' ? 'Key-Passphrase (optional, nicht Login-Passwort)' : 'Passwort'} type="password" value={draft.password || ''} onChange={e=>setDraft({...draft,password:e.target.value})}/>
+          <label className="editorLabel">Verbindungstyp
+            <select value={hostProtocol(draft)} onChange={e=>setDraftProtocol(e.target.value as 'ssh'|'rdp')}>
+              <option value="ssh">SSH / SFTP</option>
+              <option value="rdp">RDP</option>
+            </select>
+          </label>
+          <input placeholder="Name / Alias" value={draft.name} onChange={e=>setDraft({...draft,name:e.target.value})}/>
+          <input placeholder="Host / IP-Adresse" value={draft.address} onChange={e=>setDraft({...draft,address:e.target.value})}/>
+          {hostProtocol(draft) === 'ssh' ? <>
+            <div className="row"><input placeholder="SSH-Port" value={draft.port || 22} onChange={e=>setDraft({...draft,port:Number(e.target.value)})}/><input placeholder="SSH-User" value={draft.username} onChange={e=>setDraft({...draft,username:e.target.value})}/></div>
+            <label className="editorLabel">Vault-Anmeldung<select value={(draft as any).vaultId || ''} onChange={e=>setDraft({...draft,vaultId:e.target.value} as any)}><option value="">Direkte Host-Anmeldung</option>{vault.map(v=><option key={v.id} value={v.id}>{v.name} · {v.username} · {v.authMode === 'key' ? 'SSH-Key' : 'Passwort'}</option>)}</select></label>
+            {(draft as any).vaultId && <p className="hint">Nutzt Vault: {vaultLabel((draft as any).vaultId)}. Direkte User/Passwort/Key-Felder bleiben als Fallback gespeichert.</p>}
+            <select value={draft.authMode} onChange={e=>setDraft({...draft,authMode:e.target.value})}><option value="key">Key</option><option value="password">Passwort</option><option value="agent">Agent</option></select>
+            <input placeholder="Key-Pfad" value={draft.keyPath || ''} onChange={e=>setDraft({...draft,keyPath:e.target.value})}/>
+            <input placeholder={draft.authMode === 'key' ? 'Key-Passphrase (optional, nicht Login-Passwort)' : 'Passwort'} type="password" value={draft.password || ''} onChange={e=>setDraft({...draft,password:e.target.value})}/>
+            <p className="hint">SSH/SFTP nutzt Terminal und Dateimanager. RDP-Felder bleiben ausgeblendet.</p>
+          </> : <>
+            <div className="row"><input placeholder="RDP-Port" value={(draft as any).rdpPort || 3389} onChange={e=>setDraft({...draft,rdpPort:Number(e.target.value)} as any)}/><input placeholder="RDP-Benutzer" value={(draft as any).rdpUsername || ''} onChange={e=>setDraft({...draft,rdpUsername:e.target.value} as any)}/></div>
+            <div className="row"><input placeholder="RDP-Domain optional" value={(draft as any).rdpDomain || ''} onChange={e=>setDraft({...draft,rdpDomain:e.target.value} as any)}/><input placeholder="RDP-Passwort" type="password" value={(draft as any).rdpPassword || ''} onChange={e=>setDraft({...draft,rdpPassword:e.target.value} as any)}/></div>
+            <div className="row"><input placeholder="Breite" value={(draft as any).rdpWidth || 1280} onChange={e=>setDraft({...draft,rdpWidth:Number(e.target.value)} as any)}/><input placeholder="Höhe" value={(draft as any).rdpHeight || 800} onChange={e=>setDraft({...draft,rdpHeight:Number(e.target.value)} as any)}/><label className="editorLabel compactSelect">RDP Skalierung<select value={rdpScaleModeOf(draft)} onChange={e=>setDraft({...draft, rdpScaleMode:e.target.value as RDPScaleMode} as any)}><option value="smart">Smart Auto</option><option value="sharp">Scharf / Reconnect</option><option value="fit">Fit / Autoscale</option><option value="original">Originalgröße</option></select></label></div>
+            <p className="hint">RDP läuft im App-Fenster. Skalierung wird pro Host gespeichert. Passwort wird lokal verschlüsselt und nicht im Frontend angezeigt.</p>
+          </>}
           <input placeholder="Tags, comma separated" value={(draft.tags||[]).join(', ')} onChange={e=>setDraft({...draft,tags:e.target.value.split(',').map(x=>x.trim()).filter(Boolean)})}/>
           <div className="row"><button className="primary" onClick={saveHost}>Speichern</button><button onClick={closeHostEditor}>Abbrechen</button>{draft.id && <button className="danger" onClick={delHost}>Löschen</button>}</div>
         </div>}
         <div className="workspace card">
-          <div ref={terminalPaneRef} className={view==='terminal'?'terminalPane active':'terminalPane'}><div className="tabs sessionTabs">{sessions.map(s => <button key={s.id} title={`${s.title} · ${s.status}`} className={s.id===activeSession?'tab active':'tab'} onClick={()=>{setActiveSession(s.id); window.setTimeout(()=>scheduleTerminalFit(s.id, true, 'session-tab-click'),80)}}><span>{s.title} · {s.status}</span><em className="tabClose" title="Sitzung schließen" onClick={(e)=>closeTerminal(s.id,e)}>×</em></button>)}</div>{sessions.length===0 && <div className="empty">Host wählen und SSH verbinden.</div>}{sessions.map(s => <div key={s.id} className={s.id===activeSession?'term active':'term'} ref={el=>attachTerm(s.id, el)} />)}</div>
+          <div ref={terminalPaneRef} className={view==='terminal'?'terminalPane active':'terminalPane'}><div className="tabs sessionTabs">{sessions.map(s => <button key={s.id} title={`${s.title} · ${s.status}`} className={s.id===activeSession?'tab active':'tab'} onClick={()=>{setActiveSession(s.id); window.setTimeout(()=>scheduleTerminalFit(s.id, true, 'session-tab-click'),80)}}><span>{s.title} · {s.status}</span><em className="tabClose" title="Sitzung schließen" onClick={(e)=>closeTerminal(s.id,e)}>×</em></button>)}</div>{sessions.length===0 && <div className="empty">Host wählen und SSH verbinden.</div>}{sessions.map(s => <div key={s.id} className={s.id===activeSession?'term active':'term'} onContextMenu={e=>openTerminalMenu(e,s.id)} ref={el=>attachTerm(s.id, el)} />)}</div>
+          {termCtx && <div className="contextMenu terminalContextMenu" style={{left:termCtx.x, top:termCtx.y}} onClick={e=>e.stopPropagation()} onContextMenu={e=>e.preventDefault()}>
+            <button onClick={()=>copyTerminalSelection(termCtx.sessionId)}>Kopieren</button>
+            <button onClick={()=>pasteTerminalClipboard(termCtx.sessionId)}>Einfügen</button>
+            <button onClick={()=>setTermCtx(null)}>Schließen</button>
+          </div>}
+          {view==='rdp' && <div className={`rdpWorkspace rdpScale-${rdpScaleModeOf(selHost)}`}><div className="tabs sessionTabs rdpTabs">{rdpSessions.map(s => <button key={s.id} title={`${s.title} · ${s.status}`} className={s.id===activeRdp?'tab active':'tab'} onClick={()=>{setActiveRdp(s.id); window.setTimeout(()=>rdpCanvases.current[s.id]?.focus(), 40)}}><span>{s.title} · {s.status}</span><em className="tabClose" title="RDP schließen" onClick={(e)=>closeRDP(s.id,e)}>×</em></button>)}</div>{rdpSessions.length===0 && <div className="empty rdpEmpty"><span>Host wählen und RDP öffnen.</span></div>}{rdpSessions.map(s => <div key={s.id} className={s.id===activeRdp?'rdpPane active':'rdpPane'}><div className="rdpCanvasWrap" ref={el=>attachRDPWrap(s.id, el)}><canvas ref={el=>attachRDPCanvas(s.id, el)} onMouseMove={e=>rdpMouseMove(s.id,e)} onMouseDown={e=>{e.currentTarget.focus(); rdpMouse(s.id, e.button===2?'rightdown':'leftdown', e)}} onMouseUp={e=>rdpMouse(s.id, e.button===2?'rightup':'leftup', e)} onContextMenu={e=>e.preventDefault()} onDragOver={e=>{e.preventDefault(); e.stopPropagation();}} onDrop={e=>rdpFileDrop(s.id,e)} onWheel={e=>{e.preventDefault(); rdpMouse(s.id,'wheel',e, e.deltaY < 0 ? 120 : -120)}} onKeyDown={e=>rdpKey(s.id,e,true)} onKeyUp={e=>rdpKey(s.id,e,false)} onPaste={e=>rdpPaste(s.id,e)} /></div><p className="rdpHint">WebGL-RDP anklicken, dann Tastatur/Maus für RDP nutzen.</p></div>)}</div>}
           {view==='sftp' && <div className={hasActiveSftp ? 'sftp' : 'sftp emptySftpView'}>
             <div className="tabs sessionTabs sftpTabs">{sftpTabs.map(t => <button key={t.id} title={`${t.title} · ${t.remotePath}`} className={t.id===activeSftp?'tab active':'tab'} onClick={()=>switchSftpTab(t)}><span>{t.title} · {t.remotePath}</span><em className="tabClose" title="SFTP-Tab schließen" onClick={(e)=>closeSftpTab(t.id,e)}>×</em></button>)}</div>{!hasActiveSftp && <div className="empty sftpEmpty">Host wählen und SFTP öffnen.</div>}
             {hasActiveSftp && <>
@@ -1169,11 +1631,11 @@ Pfad: ${path || knownHosts.path || 'known_hosts'}`);
           </div>}
           {view==='settings' && <div className="settings"><h2>Einstellungen</h2>
             <section className="settingsCard appearanceCard"><h3>Darstellung</h3><p>Theme für Oberfläche und Terminal wählen.</p><label>Theme<div className="themePicker"><button className="themeTrigger" onClick={()=>setThemeMenuOpen(!themeMenuOpen)}>{themeOptions.find(t=>t.value===theme)?.label || 'Theme wählen'}<span>▾</span></button>{themeMenuOpen && <div className="themeMenu">{themeOptions.map(t=><button key={t.value} className={t.value===theme?'active':''} onClick={()=>{setTheme(t.value); setThemeMenuOpen(false);}}>{t.label}</button>)}</div>}</div></label></section>
-            <section className="settingsCard updateSettingsCard" ref={updateSettingsRef}><h3>Updates</h3><p>Installiert: {info?.version}. Server: {release?.version || 'noch nicht geprüft'}.</p><div className="row updateActions"><button className="primary" onClick={checkUpdates}>Updates prüfen</button><button className="primary" disabled={!release || !selectedVersion || !semverGreater(selectedVersion, info?.version || '0.0.0') || installingUpdate} onClick={installSelectedUpdate}>{installingUpdate?'Installiere…':'Ausgewählte Version installieren'}</button></div>{compatibleVersions(release).length===0 && release && <p className="ok">Du bist auf dem neuesten Stand. Nur neuere Versionen werden angeboten.</p>}{installingUpdate && <p className="warn">Version wird installiert… App schließt sich und startet danach neu.</p>}{release && selectedVersion && selectedVersion !== info?.version && <p className="warn">Ausgewählt: {selectedVersion}</p>}{compatibleVersions(release).length ? <><div className="versionPicker"><label>Version auswählen</label><button className="versionTrigger" onClick={()=>setVersionMenuOpen(!versionMenuOpen)}>{selectedVersion || 'Version wählen'}<span>▾</span></button>{versionMenuOpen && <div className="versionMenu">{compatibleVersions(release).map(v=><button key={v.version} className={v.version===selectedVersion?'active':''} onClick={()=>{ setSelectedVersion(v.version); setVersionMenuOpen(false); }}>{v.version}</button>)}</div>}</div><p className="packageInfo">Kompatibles Paket: {selectedCompatibleAsset()?.name || 'kein kompatibles Paket'} · {selectedCompatibleAsset() ? fmt(selectedCompatibleAsset()!.size) : ''}</p>{selectedChangelog().length ? <div className="changelogBox"><b>Changelog {selectedVersion}</b><ul>{selectedChangelog().map((line, idx)=><li key={idx}>{line}</li>)}</ul></div> : <p className="syncStatus">Für diese Version ist kein Changelog hinterlegt.</p>}</> : <p>Keine neuere kompatible Version verfügbar.</p>}<p>Nur neuere Versionen: prüfen → Versionsnummer wählen → Changelog lesen → „Ausgewählte Version installieren“ klicken.</p></section>
+            <section className="settingsCard updateSettingsCard" ref={updateSettingsRef}><h3>Updates</h3><p>Installiert: {info?.version}. Server: {release?.version || 'noch nicht geprüft'}.</p><div className="row updateActions"><button className="primary" onClick={checkUpdates}>Updates prüfen</button><button className="primary" disabled={!release || !selectedVersion || !semverGreater(selectedVersion, info?.version || '0.0.0') || installingUpdate} onClick={installSelectedUpdate}>{installingUpdate?'Installiere…':'Ausgewählte Version installieren'}</button></div>{compatibleVersions(release).length===0 && release && <p className="ok">Du bist auf dem neusten Stand.</p>}{installingUpdate && <p className="warn">Version wird installiert… App schließt sich und startet danach neu.</p>}{release && selectedVersion && selectedVersion !== info?.version && <p className="warn">Ausgewählt: {selectedVersion}</p>}{compatibleVersions(release).length ? <><div className="versionPicker"><label>Version auswählen</label><button className="versionTrigger" onClick={()=>setVersionMenuOpen(!versionMenuOpen)}>{selectedVersion || 'Version wählen'}<span>▾</span></button>{versionMenuOpen && <div className="versionMenu">{compatibleVersions(release).map(v=><button key={v.version} className={v.version===selectedVersion?'active':''} onClick={()=>{ setSelectedVersion(v.version); setVersionMenuOpen(false); }}>{v.version}</button>)}</div>}</div><p className="packageInfo">Kompatibles Paket: {selectedCompatibleAsset()?.name || 'kein kompatibles Paket'} · {selectedCompatibleAsset() ? fmt(selectedCompatibleAsset()!.size) : ''}</p>{selectedChangelog().length ? <div className="changelogBox"><b>Changelog {selectedVersion}</b><ul>{selectedChangelog().map((line, idx)=><li key={idx}>{line}</li>)}</ul></div> : <p className="syncStatus">Für diese Version ist kein Changelog hinterlegt.</p>}</> : null}</section>
             <section className="settingsCard" ref={localVaultSettingsRef}><h3>Lokaler Datensafe</h3><p>Passwörter, Sync-Token, Auto-Passphrase und eingebettete SSH-Keys werden lokal mit AES-GCM verschlüsselt. Ohne Entsperren bleiben Secret-Felder leer und Verbindungen mit gespeicherten Secrets gesperrt.</p><label>Tresor-Passphrase<input type="password" value={localVaultPass} onChange={e=>setLocalVaultPass(e.target.value)} placeholder="mind. 10 Zeichen"/></label><div className="row"><button className="primary" onClick={unlockLocalVault}>Entsperren</button><button onClick={encryptLocalVaultExisting}>Plaintext migrieren</button><button onClick={lockLocalVault}>Sperren</button><button onClick={refreshLocalVaultStatus}>Status prüfen</button></div><p className={localVault.plaintextSecrets ? 'warn' : localVault.unlocked ? 'ok' : 'syncStatus'}>{localVaultMsg}</p><p className="syncStatus">Status: {localVault.unlocked ? 'entsperrt' : 'gesperrt'} · verschlüsselt: {localVault.encryptedValues} · Plaintext-Secrets: {localVault.plaintextSecrets}</p></section>
             <section className="settingsCard"><h3>SSH Known Hosts</h3><p>Host-Keys sind Trust-Anker, keine Secrets. Sie liegen deshalb nicht im Vault, sondern in der App-Konfiguration. Neue Hosts werden erst nach Bestätigung gespeichert.</p><label>Pfad<input readOnly value={knownHosts.path || ''}/></label><div className="row"><button onClick={loadKnownHosts}>Neu laden</button></div><textarea readOnly className="knownHostsBox" value={knownHosts.content || ''} placeholder="Noch keine bekannten Host-Keys."/><p className="syncStatus">{knownHostsMsg}</p></section>
             <section className="settingsCard"><h3>Sync-Konto</h3><p>In der App meldest du dich nur an, damit der verschlüsselte Sync automatisch mit Token/Account gefüllt wird. Passwort, E-Mail und TOTP verwaltest du auf der Webseite.</p><label>Sync-Server<input value={accountLogin.endpoint || ''} onChange={e=>setAccountLogin({...accountLogin, endpoint:e.target.value})}/></label><label>Benutzername oder E-Mail<input value={accountLogin.username || ''} onChange={e=>setAccountLogin({...accountLogin, username:e.target.value})}/></label><label>Passwort<input type="password" value={accountLogin.password || ''} onChange={e=>setAccountLogin({...accountLogin, password:e.target.value})}/></label><div className="row"><button className="primary" disabled={accountLoginBusy} onClick={()=>loginSyncAccount()}>{accountLoginBusy?'Login läuft…':'Einloggen & Sync einrichten'}</button><button onClick={openAccountWeb}>Kontoverwaltung im Browser öffnen</button></div><p className={accountMsg.includes('fehlgeschlagen') || accountMsg.includes('entsperren') || accountMsg.includes('ungültig') ? 'warn' : accountMsg.includes('gespeichert') || accountMsg.includes('eingerichtet') ? 'ok' : 'syncStatus'}>{accountMsg}</p><p className="syncStatus">Registrierung, Passwort ändern, E-Mail ändern, TOTP aktivieren/deaktivieren und Token löschen: nur auf der Webseite. Falls TOTP aktiv ist, fragt die App den Code nach dem Passwort per Popup ab.</p></section>
-            <section className="settingsCard"><h3>Verschlüsselter Sync</h3><p>Local-first. Ohne Aktivierung bleiben Hosts, Keys und Einstellungen nur lokal. Server speichert nur AES-GCM Ciphertext.</p><label><input type="checkbox" checked={syncCfg.enabled} onChange={e=>setSyncCfg({...syncCfg, enabled:e.target.checked})}/> Sync aktivieren</label><label>Sync-Server<input value={syncCfg.endpoint || defaultSyncServer} onChange={e=>setSyncCfg({...syncCfg, endpoint:e.target.value})}/></label><label>Account/Namespace<input value={syncCfg.account || ''} onChange={e=>setSyncCfg({...syncCfg, account:e.target.value})}/></label><label>Sync-Token<input type="password" value={syncCfg.token || ''} onChange={e=>setSyncCfg({...syncCfg, token:e.target.value})} placeholder={syncTokenPlaceholder(syncCfg)}/></label><label>Verschlüsselungs-Passphrase<input type="password" value={syncPass} onChange={e=>setSyncPass(e.target.value)} placeholder={syncPassPlaceholder(syncCfg, syncPass)}/></label><label><input type="checkbox" checked={!!syncCfg.includeKeys} onChange={e=>setSyncCfg({...syncCfg, includeKeys:e.target.checked})}/> SSH-Keys verschlüsselt mitsynchronisieren</label><div className="row"><button onClick={()=>saveSync(true)}>Auto-Sync speichern</button><button className="primary" onClick={pushSync}>Jetzt hochladen</button><button onClick={pullSync}>Vom Server laden</button></div>{renderSyncNotice()}</section>
+            <section className="settingsCard" ref={syncSettingsRef}><h3>Verschlüsselter Sync</h3><p>Local-first. Ohne Aktivierung bleiben Hosts, Keys und Einstellungen nur lokal. Server speichert nur AES-GCM Ciphertext.</p><label><input type="checkbox" checked={syncCfg.enabled} onChange={e=>setSyncCfg({...syncCfg, enabled:e.target.checked})}/> Sync aktivieren</label><label>Sync-Server<input value={syncCfg.endpoint || defaultSyncServer} onChange={e=>setSyncCfg({...syncCfg, endpoint:e.target.value})}/></label><label>Account/Namespace<input value={syncCfg.account || ''} onChange={e=>setSyncCfg({...syncCfg, account:e.target.value})}/></label><label>Sync-Token<input type="password" value={syncCfg.token || ''} onChange={e=>setSyncCfg({...syncCfg, token:e.target.value})} placeholder={syncTokenPlaceholder(syncCfg)}/></label><label>Verschlüsselungs-Passphrase<input type="password" value={syncPass} onChange={e=>setSyncPass(e.target.value)} placeholder={syncPassPlaceholder(syncCfg, syncPass)}/></label><label><input type="checkbox" checked={!!syncCfg.includeKeys} onChange={e=>setSyncCfg({...syncCfg, includeKeys:e.target.checked})}/> SSH-Keys verschlüsselt mitsynchronisieren</label><div className="row" ref={syncActionsRef}><button onClick={()=>saveSync(true)}>Auto-Sync speichern</button><button className="primary" onClick={pushSync}>Jetzt hochladen</button><button onClick={pullSync}>Vom Server laden</button></div>{renderSyncNotice()}</section>
             <section className="settingsCard"><h3>Lokaler Export / Import</h3><p>Für Rechner ohne Sync-Service: Hosts + Tresor als verschlüsselte <code>.sshv2export</code>-Datei exportieren und auf anderem Gerät importieren. Vorher lokalen Datensafe entsperren.</p><label>Dateipfad<input value={transferPath} onChange={e=>setTransferPath(e.target.value)} placeholder="leer beim Export = ~/Downloads/ssh-vault2-export-....sshv2export"/></label><label>Export-Passphrase<input type="password" value={transferPass} onChange={e=>setTransferPass(e.target.value)} placeholder="mind. 10 Zeichen — auf Zielgerät nötig"/></label><label><input type="checkbox" checked={transferReplace} onChange={e=>setTransferReplace(e.target.checked)}/> Beim Import lokale Hosts/Tresor ersetzen statt zusammenführen</label><div className="row"><button className="primary" onClick={exportLocalData}>Verschlüsselt exportieren</button><button onClick={importLocalData}>Aus Datei importieren</button></div><p className="syncStatus">{transferMsg}</p></section>
             <section className="settingsCard"><h3>.ssh/config importieren</h3><p>Einmaliger, idempotenter Import vorhandener SSH-Hosts. Unterstützt Host, HostName, User, Port und IdentityFile. Wildcards werden übersprungen.</p><label>Pfad zur SSH Config<input value={sshConfigPath} onChange={e=>setSSHConfigPath(e.target.value)} placeholder="leer = ~/.ssh/config"/></label><div className="row"><button className="primary" onClick={importSSHConfig}>Jetzt importieren</button></div><p className="syncStatus">{importMsg}</p></section>
           </div>}

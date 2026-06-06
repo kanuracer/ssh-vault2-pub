@@ -1,16 +1,30 @@
 [Unit]
-Description=ssh-vault2 self-hosted server
-Requires=docker.service
-After=docker.service network-online.target
+Description=SSH Vault 2 download and sync server
+After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+Type=simple
 WorkingDirectory=/opt/ssh-vault2-server
-ExecStart=/usr/bin/docker compose -f /opt/ssh-vault2-server/compose.yaml up -d --remove-orphans
-ExecStop=/usr/bin/docker compose -f /opt/ssh-vault2-server/compose.yaml down
-TimeoutStartSec=0
+ExecStart=/usr/local/bin/node /opt/ssh-vault2-server/server.mjs
+Restart=always
+RestartSec=3
+User=sshvault
+Group=sshvault
+Environment=PORT=18080
+# Registration modes: open (default), approval, closed
+# Environment=SSH_VAULT2_REGISTRATION_MODE=approval
+# Comma-separated accounts allowed to use /api/v1/admin/* and the Admin panel
+# Environment=SSH_VAULT2_ADMIN_ACCOUNTS=admin
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ssh-vault2-server/data /opt/ssh-vault2-server/downloads
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=false
 
 [Install]
 WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+.git
+.gitignore
+frontend/node_modules
+frontend/dist
+node_modules
+bin
+build/bin
+release-wails
+docs/test-evidence
+server-data
+*.log
+*.tmp
+.DS_Store

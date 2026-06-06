@@ -14,6 +14,7 @@ var assets embed.FS
 func init() {
 	application.RegisterEvent[SSHDataPayload]("ssh:data")
 	application.RegisterEvent[SessionState]("ssh:status")
+	application.RegisterEvent[SessionState](rdpStatusEvent)
 }
 
 func main() {

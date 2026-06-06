@@ -6,11 +6,11 @@
 name: "ssh-vault2"
 arch: ${GOARCH}
 platform: "linux"
-version: "1.1.2"
+version: "1.5.5"
 section: "default"
 priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
-description: "SSH/SFTP desktop client"
+description: "SSH/SFTP/RDP desktop client"
 vendor: "Example Org"
 homepage: "https://wails.io"
 license: "MIT"

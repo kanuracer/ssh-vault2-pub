@@ -1,10 +1,10 @@
 {
 	"fixed": {
-		"file_version": "1.2.26"
+		"file_version": "1.5.5"
 	},
 	"info": {
 		"0000": {
-			"ProductVersion": "1.2.26",
+			"ProductVersion": "1.5.5",
 			"CompanyName": "Example Org",
 			"FileDescription": "SSH/SFTP desktop client",
 			"LegalCopyright": "© 2026, Example Org",

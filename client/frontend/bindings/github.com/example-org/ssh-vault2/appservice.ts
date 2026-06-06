@@ -13,6 +13,10 @@ export function CloseAllSessions(): $CancellablePromise<void> {
     return $Call.ByID(3174477948);
 }
 
+export function CloseRDP(id: string): $CancellablePromise<void> {
+    return $Call.ByID(419661336, id);
+}
+
 export function CloseSFTP(id: string): $CancellablePromise<void> {
     return $Call.ByID(2486276215, id);
 }
@@ -21,21 +25,27 @@ export function CloseSSH(id: string): $CancellablePromise<void> {
     return $Call.ByID(3049651332, id);
 }
 
+export function ConnectRDP(hostID: string, width: number, height: number): $CancellablePromise<$models.SessionState> {
+    return $Call.ByID(302728202, hostID, width, height).then(($result: any) => {
+        return $$createType0($result);
+    });
+}
+
 export function ConnectSFTP(hostID: string): $CancellablePromise<$models.SFTPConnectResult> {
     return $Call.ByID(1024773161, hostID).then(($result: any) => {
-        return $$createType0($result);
+        return $$createType1($result);
     });
 }
 
 export function ConnectSSH(hostID: string): $CancellablePromise<$models.SessionState> {
     return $Call.ByID(2246636346, hostID).then(($result: any) => {
-        return $$createType1($result);
+        return $$createType0($result);
     });
 }
 
 export function ConnectSSHWithSize(hostID: string, cols: number, rows: number): $CancellablePromise<$models.SessionState> {
     return $Call.ByID(333341575, hostID, cols, rows).then(($result: any) => {
-        return $$createType1($result);
+        return $$createType0($result);
     });
 }
 
@@ -215,15 +225,51 @@ export function PropertiesStatSFTP(id: string, remotePath: string): $Cancellable
     });
 }
 
+export function RDPClipboardText(): $CancellablePromise<string> {
+    return $Call.ByID(3239680081);
+}
+
+export function RDPDiagnostics(id: string): $CancellablePromise<$models.RDPDiagnostics> {
+    return $Call.ByID(2266934224, id).then(($result: any) => {
+        return $$createType15($result);
+    });
+}
+
+export function RDPKey(id: string, code: string, down: boolean): $CancellablePromise<void> {
+    return $Call.ByID(373667723, id, code, down);
+}
+
+export function RDPMouse(id: string, action: string, x: number, y: number, delta: number): $CancellablePromise<void> {
+    return $Call.ByID(3562491631, id, action, x, y, delta);
+}
+
+export function RDPRenderEndpoint(id: string): $CancellablePromise<$models.RDPRenderEndpoint> {
+    return $Call.ByID(2079007773, id).then(($result: any) => {
+        return $$createType16($result);
+    });
+}
+
+export function RDPStageClipboardFiles(id: string, files: $models.RDPClipboardFileUpload[]): $CancellablePromise<void> {
+    return $Call.ByID(3447101027, id, files);
+}
+
+export function RDPStageClipboardText(id: string, text: string): $CancellablePromise<void> {
+    return $Call.ByID(2656807139, id, text);
+}
+
+export function RDPTypeText(id: string, text: string): $CancellablePromise<void> {
+    return $Call.ByID(2682646083, id, text);
+}
+
 export function ReadTextLocal(localPath: string): $CancellablePromise<$models.TextFileContent> {
     return $Call.ByID(523661804, localPath).then(($result: any) => {
-        return $$createType15($result);
+        return $$createType17($result);
     });
 }
 
 export function ReadTextSFTP(id: string, remotePath: string): $CancellablePromise<$models.TextFileContent> {
     return $Call.ByID(3827275116, id, remotePath).then(($result: any) => {
-        return $$createType15($result);
+        return $$createType17($result);
     });
 }
 
@@ -267,25 +313,25 @@ export function SaveVault(v: $models.VaultCredential): $CancellablePromise<$mode
 
 export function ServerReleases(): $CancellablePromise<$models.ReleaseIndex> {
     return $Call.ByID(3269683007).then(($result: any) => {
-        return $$createType16($result);
+        return $$createType18($result);
     });
 }
 
 export function SyncLogin(req: $models.SyncAccountRequest): $CancellablePromise<$models.SyncAccountResult> {
     return $Call.ByID(1194388022, req).then(($result: any) => {
-        return $$createType17($result);
+        return $$createType19($result);
     });
 }
 
 export function SyncPull(passphrase: string): $CancellablePromise<$models.SyncResult> {
     return $Call.ByID(2820837906, passphrase).then(($result: any) => {
-        return $$createType18($result);
+        return $$createType20($result);
     });
 }
 
 export function SyncPush(passphrase: string): $CancellablePromise<$models.SyncResult> {
     return $Call.ByID(2787723953, passphrase).then(($result: any) => {
-        return $$createType18($result);
+        return $$createType20($result);
     });
 }
 
@@ -314,8 +360,8 @@ export function WriteTextSFTP(id: string, remotePath: string, content: string): 
 }
 
 // Private type creation functions
-const $$createType0 = $models.SFTPConnectResult.createFrom;
-const $$createType1 = $models.SessionState.createFrom;
+const $$createType0 = $models.SessionState.createFrom;
+const $$createType1 = $models.SFTPConnectResult.createFrom;
 const $$createType2 = $models.HostConfig.createFrom;
 const $$createType3 = $Create.Array($$createType2);
 const $$createType4 = $models.VaultCredential.createFrom;
@@ -329,7 +375,9 @@ const $$createType11 = $models.FileEntry.createFrom;
 const $$createType12 = $Create.Array($$createType11);
 const $$createType13 = $models.LocalVaultStatus.createFrom;
 const $$createType14 = $models.IdentityOptions.createFrom;
-const $$createType15 = $models.TextFileContent.createFrom;
-const $$createType16 = $models.ReleaseIndex.createFrom;
-const $$createType17 = $models.SyncAccountResult.createFrom;
-const $$createType18 = $models.SyncResult.createFrom;
+const $$createType15 = $models.RDPDiagnostics.createFrom;
+const $$createType16 = $models.RDPRenderEndpoint.createFrom;
+const $$createType17 = $models.TextFileContent.createFrom;
+const $$createType18 = $models.ReleaseIndex.createFrom;
+const $$createType19 = $models.SyncAccountResult.createFrom;
+const $$createType20 = $models.SyncResult.createFrom;

@@ -12,13 +12,14 @@ import * as main$0 from "../../../../example-org/ssh-vault2/models.js";
 
 function configure() {
     Object.freeze(Object.assign($Create.Events, {
-        "ssh:data": $$createType0,
-        "ssh:status": $$createType1,
+        "rdp:status": $$createType0,
+        "ssh:data": $$createType1,
+        "ssh:status": $$createType0,
     }));
 }
 
 // Private type creation functions
-const $$createType0 = main$0.SSHDataPayload.createFrom;
-const $$createType1 = main$0.SessionState.createFrom;
+const $$createType0 = main$0.SessionState.createFrom;
+const $$createType1 = main$0.SSHDataPayload.createFrom;
 
 configure();

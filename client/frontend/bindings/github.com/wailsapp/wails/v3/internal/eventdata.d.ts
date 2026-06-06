@@ -12,6 +12,7 @@ import type * as main$0 from "../../../../example-org/ssh-vault2/models.js";
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
+            "rdp:status": main$0.SessionState;
             "ssh:data": main$0.SSHDataPayload;
             "ssh:status": main$0.SessionState;
         }

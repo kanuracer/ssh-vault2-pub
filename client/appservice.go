@@ -44,7 +44,7 @@ import (
 const releaseServer = "https://ssh-vault.example.org"
 const releaseSumsPublicKeyB64 = "vJeyJk2gpQ8XWilK/MseOuIWiw6llWP3NXbNPmw2HiQ="
 const sshUnknownHostKeyPrefix = "SSH_HOST_KEY_UNKNOWN|"
-const appVersion = "1.2.26"
+const appVersion = "1.5.5"
 const appHTTPTimeout = 20 * time.Second
 const maxReleaseIndexBytes int64 = 2 * 1024 * 1024
 const maxReleaseSumsBytes int64 = 1024 * 1024
@@ -162,20 +162,30 @@ func sshDialAddress(h HostConfig) (string, error) {
 }
 
 type HostConfig struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	Address         string   `json:"address"`
-	Port            int      `json:"port"`
-	Username        string   `json:"username"`
-	AuthMode        string   `json:"authMode"`
-	KeyPath         string   `json:"keyPath,omitempty"`
-	Password        string   `json:"password,omitempty"`
-	PrivateKey      string   `json:"privateKey,omitempty"`
-	PasswordSaved   bool     `json:"passwordSaved,omitempty"`
-	PrivateKeySaved bool     `json:"privateKeySaved,omitempty"`
-	VaultID         string   `json:"vaultId,omitempty"`
-	Tags            []string `json:"tags"`
-	Group           string   `json:"group,omitempty"`
+	ID               string   `json:"id"`
+	Protocol         string   `json:"protocol,omitempty"`
+	Name             string   `json:"name"`
+	Address          string   `json:"address"`
+	Port             int      `json:"port"`
+	Username         string   `json:"username"`
+	AuthMode         string   `json:"authMode"`
+	KeyPath          string   `json:"keyPath,omitempty"`
+	Password         string   `json:"password,omitempty"`
+	PrivateKey       string   `json:"privateKey,omitempty"`
+	PasswordSaved    bool     `json:"passwordSaved,omitempty"`
+	PrivateKeySaved  bool     `json:"privateKeySaved,omitempty"`
+	RDPEnabled       bool     `json:"rdpEnabled,omitempty"`
+	RDPPort          int      `json:"rdpPort,omitempty"`
+	RDPUsername      string   `json:"rdpUsername,omitempty"`
+	RDPPassword      string   `json:"rdpPassword,omitempty"`
+	RDPPasswordSaved bool     `json:"rdpPasswordSaved,omitempty"`
+	RDPDomain        string   `json:"rdpDomain,omitempty"`
+	RDPWidth         int      `json:"rdpWidth,omitempty"`
+	RDPHeight        int      `json:"rdpHeight,omitempty"`
+	RDPScaleMode     string   `json:"rdpScaleMode,omitempty"`
+	VaultID          string   `json:"vaultId,omitempty"`
+	Tags             []string `json:"tags"`
+	Group            string   `json:"group,omitempty"`
 }
 type SessionState struct {
 	ID        string `json:"id"`
@@ -421,11 +431,17 @@ type AppService struct {
 	dataMu   sync.Mutex
 	ssh      map[string]*sshRec
 	sftps    map[string]*sftpRec
+	rdps     map[string]*rdpRec
+	render   *RDPRenderHub
 	localKey []byte
 }
 
 func NewAppService() *AppService {
-	return &AppService{ssh: map[string]*sshRec{}, sftps: map[string]*sftpRec{}}
+	render, err := NewRDPRenderHub()
+	if err != nil {
+		appLog("RDP render hub unavailable: %v", err)
+	}
+	return &AppService{ssh: map[string]*sshRec{}, sftps: map[string]*sftpRec{}, rdps: map[string]*rdpRec{}, render: render}
 }
 func (s *AppService) setApp(app *application.App) { s.app = app }
 func appLog(format string, args ...any) {
@@ -661,6 +677,10 @@ func (s *AppService) decryptHostSecrets(h HostConfig, blankWhenLocked bool) (Hos
 	if e != nil {
 		return h, e
 	}
+	h.RDPPassword, e = s.decryptSecret(h.RDPPassword, blankWhenLocked)
+	if e != nil {
+		return h, e
+	}
 	return h, nil
 }
 func (s *AppService) encryptHostSecrets(h HostConfig) (HostConfig, error) {
@@ -670,6 +690,10 @@ func (s *AppService) encryptHostSecrets(h HostConfig) (HostConfig, error) {
 		return h, e
 	}
 	h.PrivateKey, e = s.encryptSecret(h.PrivateKey)
+	if e != nil {
+		return h, e
+	}
+	h.RDPPassword, e = s.encryptSecret(h.RDPPassword)
 	if e != nil {
 		return h, e
 	}
@@ -745,20 +769,100 @@ func safeRecordID(v string) string {
 	}
 	return uuid.NewString()
 }
+func stableHostID(h HostConfig) string {
+	proto := strings.ToLower(strings.TrimSpace(h.Protocol))
+	if proto == "" {
+		if h.RDPEnabled {
+			proto = "rdp"
+		} else {
+			proto = "ssh"
+		}
+	}
+	if proto != "rdp" {
+		proto = "ssh"
+	}
+	seed := strings.Join([]string{
+		proto,
+		strings.ToLower(strings.TrimSpace(h.Name)),
+		strings.ToLower(strings.TrimSpace(h.Address)),
+		fmt.Sprintf("%d", h.Port),
+		fmt.Sprintf("%d", h.RDPPort),
+		strings.ToLower(strings.TrimSpace(h.Username)),
+		strings.ToLower(strings.TrimSpace(h.RDPUsername)),
+	}, "\x1f")
+	if strings.Trim(seed, "\x1f0") == "" {
+		return uuid.NewString()
+	}
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("ssh-vault2-host:"+seed)).String()
+}
+
 func normHost(h HostConfig) HostConfig {
-	if !validUUID(h.ID) {
-		h.ID = uuid.NewString()
+	h.Protocol = strings.ToLower(strings.TrimSpace(h.Protocol))
+	if h.Protocol == "" {
+		if h.RDPEnabled {
+			h.Protocol = "rdp"
+		} else {
+			h.Protocol = "ssh"
+		}
+	}
+	if h.Protocol != "rdp" {
+		h.Protocol = "ssh"
 	}
 	h.Name = strings.TrimSpace(h.Name)
 	h.Address = strings.TrimSpace(h.Address)
 	h.Username = strings.TrimSpace(h.Username)
+	h.RDPUsername = strings.TrimSpace(h.RDPUsername)
+	h.RDPDomain = strings.TrimSpace(h.RDPDomain)
+	if !validUUID(h.ID) {
+		h.ID = stableHostID(h)
+	}
+	if h.Protocol == "rdp" {
+		h.RDPEnabled = true
+		if h.RDPUsername == "" {
+			h.RDPUsername = h.Username
+		}
+		if h.RDPPort == 0 {
+			h.RDPPort = 3389
+		}
+		h.RDPScaleMode = strings.ToLower(strings.TrimSpace(h.RDPScaleMode))
+		if h.RDPScaleMode != "sharp" && h.RDPScaleMode != "fit" && h.RDPScaleMode != "original" {
+			h.RDPScaleMode = "smart"
+		}
+		if h.RDPWidth == 0 {
+			h.RDPWidth = 1280
+		}
+		if h.RDPHeight == 0 {
+			h.RDPHeight = 720
+		}
+		if h.RDPWidth < 640 {
+			h.RDPWidth = 640
+		}
+		if h.RDPHeight < 480 {
+			h.RDPHeight = 480
+		}
+		if h.RDPWidth > 3840 {
+			h.RDPWidth = 3840
+		}
+		if h.RDPHeight > 2160 {
+			h.RDPHeight = 2160
+		}
+	} else {
+		h.RDPEnabled = false
+		h.RDPPort = 0
+		h.RDPUsername = ""
+		h.RDPPassword = ""
+		h.RDPDomain = ""
+		h.RDPWidth = 0
+		h.RDPHeight = 0
+		h.RDPScaleMode = ""
+	}
 	if h.Port == 0 {
 		h.Port = 22
 	}
 	if h.AuthMode == "" {
 		h.AuthMode = "agent"
 	}
-	if h.Username == "" {
+	if h.Protocol == "ssh" && h.Username == "" {
 		if u, err := user.Current(); err == nil {
 			h.Username = u.Username
 		}
@@ -852,7 +956,7 @@ func (s *AppService) readVaultRaw() ([]VaultCredential, error) {
 func countSecretState(hs []HostConfig, vs []VaultCredential, c SyncConfig) (enc, plain int) {
 	vals := []string{c.Token, c.AutoPassphrase}
 	for _, h := range hs {
-		vals = append(vals, h.Password, h.PrivateKey)
+		vals = append(vals, h.Password, h.PrivateKey, h.RDPPassword)
 	}
 	for _, v := range vs {
 		vals = append(vals, v.Password, v.PrivateKey)
@@ -911,7 +1015,7 @@ func (s *AppService) LocalVaultUnlock(passphrase string) (LocalVaultStatus, erro
 func collectSecretValues(hs []HostConfig, vs []VaultCredential) []string {
 	out := []string{}
 	for _, h := range hs {
-		out = append(out, h.Password, h.PrivateKey)
+		out = append(out, h.Password, h.PrivateKey, h.RDPPassword)
 	}
 	for _, v := range vs {
 		out = append(out, v.Password, v.PrivateKey)
@@ -965,8 +1069,10 @@ func (s *AppService) hardenLocalFiles() error {
 func sanitizeHostForRenderer(h HostConfig) HostConfig {
 	h.PasswordSaved = strings.TrimSpace(h.Password) != ""
 	h.PrivateKeySaved = strings.TrimSpace(h.PrivateKey) != ""
+	h.RDPPasswordSaved = strings.TrimSpace(h.RDPPassword) != ""
 	h.Password = ""
 	h.PrivateKey = ""
+	h.RDPPassword = ""
 	return h
 }
 func sanitizeVaultForRenderer(v VaultCredential) VaultCredential {
@@ -1022,11 +1128,16 @@ func (s *AppService) SaveHost(h HostConfig) ([]HostConfig, error) {
 	found := false
 	for i := range hs {
 		if hs[i].ID == h.ID {
-			if h.Password == "" && strings.TrimSpace(hs[i].Password) != "" {
-				h.Password = hs[i].Password
+			if h.Protocol == "ssh" {
+				if h.Password == "" && strings.TrimSpace(hs[i].Password) != "" {
+					h.Password = hs[i].Password
+				}
+				if h.PrivateKey == "" && strings.TrimSpace(hs[i].PrivateKey) != "" {
+					h.PrivateKey = hs[i].PrivateKey
+				}
 			}
-			if h.PrivateKey == "" && strings.TrimSpace(hs[i].PrivateKey) != "" {
-				h.PrivateKey = hs[i].PrivateKey
+			if h.Protocol == "rdp" && h.RDPPassword == "" && strings.TrimSpace(hs[i].RDPPassword) != "" {
+				h.RDPPassword = hs[i].RDPPassword
 			}
 			hs[i] = h
 			found = true
