@@ -209,7 +209,7 @@ func ntlmAuthenticateTargetInfo(info []byte, servicePrincipalName string, includ
 		binary.LittleEndian.PutUint32(flags[:], msvAvMICPresent)
 		writeAVPair(&out, msvAvFlags, flags[:])
 	}
-	// Some CredSSP servers expect MsvAvChannelBindings in NTLMv2 target info.
+	// desktop client/WinPR sends MsvAvChannelBindings by default for CredSSP EPA.
 	// With no explicit SEC_CHANNEL_BINDINGS buffer the MD5 hash is 16 zero bytes.
 	writeAVPair(&out, msvAvChannelBindings, make([]byte, 16))
 	if strings.TrimSpace(servicePrincipalName) != "" {
@@ -217,7 +217,7 @@ func ntlmAuthenticateTargetInfo(info []byte, servicePrincipalName string, includ
 	}
 	le16(&out, msvAvEOL)
 	le16(&out, 0)
-	// Reserve trailing zero bytes in NTLMv2 authenticate target info for compatibility.
+	// WinPR reserves eight trailing zero bytes in NTLMv2 authenticate target info.
 	out.Write(make([]byte, 8))
 	return out.Bytes()
 }

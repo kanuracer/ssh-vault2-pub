@@ -11,7 +11,7 @@ import (
 	"github.com/tomatome/grdp/protocol/nla"
 )
 
-// protocol helper
+// take idea from https://github.com/Madnikulin50/gordp
 
 /**
  * Type of tpkt packet

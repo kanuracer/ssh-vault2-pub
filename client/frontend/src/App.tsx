@@ -12,7 +12,7 @@ import './style.css';
 const defaultSyncServer = 'https://ssh-vault.example.org';
 const normalizeEndpoint = (v = '') => {
   const endpoint = v.trim().replace(/\/$/, '');
-  return (!endpoint) ? defaultSyncServer : endpoint;
+  return (!endpoint || endpoint === 'https://ssh-vault.example.org' || endpoint === 'https://192.0.2.117:18080') ? defaultSyncServer : endpoint;
 };
 const validSyncEndpoint = (v = '') => {
   try {
@@ -20,7 +20,7 @@ const validSyncEndpoint = (v = '') => {
     return u.protocol === 'https:' || (u.protocol === 'http:' && ['localhost','127.0.0.1','::1'].includes(u.hostname));
   } catch { return false; }
 };
-const emptyHost: HostConfig = { id: '', protocol:'ssh', name: '', address: '', port: 22, username: '', authMode: 'key', keyPath: '', password: '', vaultId: '', tags: [], rdpEnabled:false, rdpPort:3389, rdpUsername:'', rdpPassword:'', rdpDomain:'', rdpWidth:1280, rdpHeight:800, rdpScaleMode:'smart' } as any;
+const emptyHost: HostConfig = { id: '', protocol:'ssh', name: '', address: '', port: 22, username: '', authMode: 'key', keyPath: '', password: '', vaultId: '', tags: [], rdpEnabled:false, rdpPort:3389, rdpUsername:'', rdpPassword:'', rdpDomain:'', rdpWidth:1280, rdpHeight:800, rdpScaleMode:'smart', rdpKeyboardLayout:'en-US' } as any;
 const hostProtocol = (h: HostConfig): 'ssh'|'rdp' => ((h as any).protocol === 'rdp' || (h as any).rdpEnabled) ? 'rdp' : 'ssh';
 const hostUserLabel = (h: HostConfig) => hostProtocol(h) === 'rdp' ? ((h as any).rdpUsername || h.username || 'rdp') : (h.username || 'ssh');
 const hostPortLabel = (h: HostConfig) => hostProtocol(h) === 'rdp' ? ((h as any).rdpPort || 3389) : (h.port || 22);
@@ -115,13 +115,15 @@ type ExternalDropItem = {relPath:string;file?:File;kind:'file'|'directory'};
 type TerminalChunk = string | Uint8Array;
 type TerminalPayload = {seq: number; data: TerminalChunk};
 type TerminalContextMenu = {x:number;y:number;sessionId:string};
-type TerminalRecord = {term: Terminal; fit: FitAddon; el: HTMLDivElement; cols?: number; rows?: number; resizeSeq?: number; resizeObserver?: ResizeObserver; resizeTimer?: number; resizeFrame?: number; altScreen?: boolean; altScanTail?: string; altRefreshTimer?: number; expectedSeq?: number; seqBuffer?: Record<number, TerminalChunk>; seqGapTimer?: number; contextMenuHandler?: (e: globalThis.MouseEvent) => void};
+type TerminalRecord = {term: Terminal; fit: FitAddon; el: HTMLDivElement; cols?: number; rows?: number; resizeSeq?: number; resizeObserver?: ResizeObserver; resizeTimer?: number; resizeFrame?: number; altScreen?: boolean; bracketedPaste?: boolean; altScanTail?: string; altRefreshTimer?: number; expectedSeq?: number; seqBuffer?: Record<number, TerminalChunk>; seqGapTimer?: number; contextMenuHandler?: (e: globalThis.MouseEvent) => void; pasteHandler?: (e: globalThis.ClipboardEvent) => void};
 type RDPAudioRecord = {ctx: AudioContext; nextTime: number};
 type SftpTab = {id:string; hostID:string; title:string; remotePath:string; remote:FileEntry[]; selectedRemote:string};
 type RDPScaleMode = 'smart'|'sharp'|'fit'|'original';
+type RDPKeyboardLayout = 'en-US'|'de-DE';
 const isFullRDPFrame = (frame: RDPBinaryFrame) => frame.left === 0 && frame.top === 0 && frame.width === frame.surfaceWidth && frame.height === frame.surfaceHeight;
 const lastFullRDPFrameIndex = (frames: RDPBinaryFrame[]) => { for (let i = frames.length - 1; i >= 0; i--) if (isFullRDPFrame(frames[i])) return i; return -1; };
 const rdpScaleModeOf = (host?: HostConfig): RDPScaleMode => { const m = (host as any)?.rdpScaleMode; return m === 'sharp' || m === 'fit' || m === 'original' ? m : 'smart'; };
+const rdpKeyboardLayoutOf = (host?: HostConfig): RDPKeyboardLayout => ((host as any)?.rdpKeyboardLayout === 'de-DE' ? 'de-DE' : 'en-US');
 const storedTheme = (): AppTheme => { const t = localStorage.getItem('sshv.theme'); if (t === 'apple-liquid') { localStorage.setItem('sshv.theme','liquid-glozzy'); return 'liquid-glozzy'; } return t === 'github-gray' || t === 'matrix-green' || t === 'liquid-glozzy' || t === 'light' ? t : 'default'; };
 const visibleTagsStorageKey = 'sshv.visibleTags';
 const storedVisibleTags = (): string[] => {
@@ -312,7 +314,9 @@ function App() {
     const text = (rec.altScanTail || '') + chunkControlText(data);
     if (/\x1b\[\?(1049|1047|47)h/.test(text)) rec.altScreen = true;
     if (/\x1b\[\?(1049|1047|47)l/.test(text)) rec.altScreen = false;
-    rec.altScanTail = text.slice(-32);
+    if (/\x1b\[\?2004h/.test(text)) rec.bracketedPaste = true;
+    if (/\x1b\[\?2004l/.test(text)) rec.bracketedPaste = false;
+    rec.altScanTail = text.slice(-64);
   };
   const scheduleAltScreenRefresh = (rec: TerminalRecord) => {
     if (rec.altRefreshTimer) return;
@@ -514,6 +518,24 @@ function App() {
     }, 70);
   }
 
+  const normalizeTerminalPasteText = (text = '') => text.replace(/\r\n?/g, '\n');
+  async function writeSSHPasteText(sessionId: string, text: string) {
+    const normalized = normalizeTerminalPasteText(text);
+    if (!normalized) return;
+    const rec = terms.current[sessionId];
+    const isMultiline = /\n/.test(normalized);
+    if (isMultiline && rec?.bracketedPaste) {
+      await API.WriteSSH(sessionId, `\x1b[200~${normalized.replace(/\n/g, '\r')}\x1b[201~`);
+      return;
+    }
+    const payload = isMultiline ? normalized.replace(/\n/g, '\r') : normalized;
+    const chars = Array.from(payload);
+    for (let i = 0; i < chars.length; i += 256) {
+      await API.WriteSSH(sessionId, chars.slice(i, i + 256).join(''));
+      if (i + 256 < chars.length) await new Promise(resolve => window.setTimeout(resolve, 8));
+    }
+  }
+
   function attachTerm(id: string, el: HTMLDivElement | null) {
     if (!el) return;
     const existing = terms.current[id];
@@ -525,6 +547,7 @@ function App() {
       if (existing.seqGapTimer) window.clearTimeout(existing.seqGapTimer);
       try { existing.resizeObserver?.disconnect(); } catch {}
       if (existing.contextMenuHandler) existing.el.removeEventListener('contextmenu', existing.contextMenuHandler, {capture:true});
+      if (existing.pasteHandler) existing.el.removeEventListener('paste', existing.pasteHandler, {capture:true});
       try { existing.term.dispose(); } catch {}
       delete terms.current[id];
       el.innerHTML = '';
@@ -533,8 +556,10 @@ function App() {
     const term = new Terminal({ cursorBlink: true, fontFamily: 'JetBrains Mono, Consolas, monospace', fontSize: 13, lineHeight: 1, letterSpacing: 0, customGlyphs: false, theme: terminalTheme(theme) });
     term.loadAddon(fit); term.open(el); term.onData(d => API.WriteSSH(id, d));
     const contextMenuHandler = (e: globalThis.MouseEvent) => openTerminalMenu(e, id);
+    const pasteHandler = (e: globalThis.ClipboardEvent) => { const text = e.clipboardData?.getData('text/plain') || ''; if (!text) return; e.preventDefault(); e.stopPropagation(); void writeSSHPasteText(id, text).then(()=>setMsg('In Terminal eingefügt')).catch(err=>setMsg('Einfügen fehlgeschlagen: '+cleanError(err))); };
     el.addEventListener('contextmenu', contextMenuHandler, {capture:true});
-    const rec: TerminalRecord = { term, fit, el, expectedSeq: 1, seqBuffer: {}, contextMenuHandler };
+    el.addEventListener('paste', pasteHandler, {capture:true});
+    const rec: TerminalRecord = { term, fit, el, expectedSeq: 1, seqBuffer: {}, contextMenuHandler, pasteHandler };
     terms.current[id] = rec;
     const pending = pendingTermBuffers.current[id] || [];
     pending.sort((a, b) => a.seq - b.seq).forEach(p => writeSSHPayload(id, p.seq, p.data));
@@ -558,6 +583,7 @@ function App() {
     if (rec?.seqGapTimer) window.clearTimeout(rec.seqGapTimer);
     try { rec?.resizeObserver?.disconnect(); } catch {}
     if (rec?.contextMenuHandler) rec.el.removeEventListener('contextmenu', rec.contextMenuHandler, {capture:true});
+    if (rec?.pasteHandler) rec.el.removeEventListener('paste', rec.pasteHandler, {capture:true});
     try { terms.current[id]?.term.dispose(); } catch {}
     delete terms.current[id];
     delete pendingTermBuffers.current[id];
@@ -586,7 +612,7 @@ function App() {
     try {
       const text = await navigator.clipboard.readText();
       if (!text) { setMsg('Zwischenablage ist leer.'); return; }
-      await API.WriteSSH(sessionId, text);
+      await writeSSHPasteText(sessionId, text);
       setTermCtx(null);
       setMsg('In Terminal eingefügt');
     } catch (e) { setMsg('Einfügen fehlgeschlagen: ' + cleanError(e)); }
@@ -596,8 +622,8 @@ function App() {
   function beginEditHost(id = selected) { const h = hosts.find(x => x.id === id); if (h) { setSelected(h.id); setDraft({...h, protocol: hostProtocol(h), tags:[...(h.tags||[])]} as any); setEditing(true); setCtx(null); } }
   function setDraftProtocol(protocol: 'ssh'|'rdp') {
     setDraft(prev => protocol === 'rdp'
-      ? ({...prev, protocol:'rdp', rdpEnabled:true, rdpPort:(prev as any).rdpPort || 3389, rdpUsername:(prev as any).rdpUsername || prev.username || '', rdpWidth:(prev as any).rdpWidth || 1280, rdpHeight:(prev as any).rdpHeight || 800, port: prev.port === 22 ? 22 : prev.port} as any)
-      : ({...prev, protocol:'ssh', rdpEnabled:false, rdpPort:0, rdpUsername:'', rdpPassword:'', rdpDomain:'', rdpWidth:0, rdpHeight:0, port: prev.port && prev.port !== 3389 ? prev.port : 22} as any));
+      ? ({...prev, protocol:'rdp', rdpEnabled:true, rdpPort:(prev as any).rdpPort || 3389, rdpUsername:(prev as any).rdpUsername || prev.username || '', rdpWidth:(prev as any).rdpWidth || 1280, rdpHeight:(prev as any).rdpHeight || 800, rdpKeyboardLayout:rdpKeyboardLayoutOf(prev), port: prev.port === 22 ? 22 : prev.port} as any)
+      : ({...prev, protocol:'ssh', rdpEnabled:false, rdpPort:0, rdpUsername:'', rdpPassword:'', rdpDomain:'', rdpWidth:0, rdpHeight:0, rdpScaleMode:'', rdpKeyboardLayout:'', port: prev.port && prev.port !== 3389 ? prev.port : 22} as any));
   }
   function editTags(id = selected) { beginEditHost(id); setMsg('Tags im Host-Editor bearbeiten.'); }
   function hostContext(e: MouseEvent, h: HostConfig) { e.preventDefault(); e.stopPropagation(); setSftpCtx(null); setSelected(h.id); closeHostEditor(); setCtx({x:e.clientX,y:e.clientY,host:h}); }
@@ -612,8 +638,8 @@ function App() {
     const protocol = hostProtocol(draft);
     const tags = String((draft as any).tagsText ?? draft.tags?.join(',') ?? '').split(',').map(x => x.trim()).filter(Boolean);
     const next = protocol === 'rdp'
-      ? ({...draft, protocol:'rdp', rdpEnabled:true, rdpPort:Number((draft as any).rdpPort || 3389), rdpWidth:Number((draft as any).rdpWidth || 1280), rdpHeight:Number((draft as any).rdpHeight || 800), rdpScaleMode:rdpScaleModeOf(draft), port:Number(draft.port || 22), authMode:draft.authMode || 'agent', tags} as any)
-      : ({...draft, protocol:'ssh', rdpEnabled:false, rdpPort:0, rdpUsername:'', rdpPassword:'', rdpDomain:'', rdpWidth:0, rdpHeight:0, rdpScaleMode:'smart', port:Number(draft.port || 22), tags} as any);
+      ? ({...draft, protocol:'rdp', rdpEnabled:true, rdpPort:Number((draft as any).rdpPort || 3389), rdpWidth:Number((draft as any).rdpWidth || 1280), rdpHeight:Number((draft as any).rdpHeight || 800), rdpScaleMode:rdpScaleModeOf(draft), rdpKeyboardLayout:rdpKeyboardLayoutOf(draft), port:Number(draft.port || 22), authMode:draft.authMode || 'agent', tags} as any)
+      : ({...draft, protocol:'ssh', rdpEnabled:false, rdpPort:0, rdpUsername:'', rdpPassword:'', rdpDomain:'', rdpWidth:0, rdpHeight:0, rdpScaleMode:'smart', rdpKeyboardLayout:'', port:Number(draft.port || 22), tags} as any);
     const h = await API.SaveHost(next as HostConfig); setHosts(h); setSelected(next.id || h[h.length - 1]?.id || ''); closeHostEditor(); setMsg('Host gespeichert'); void autoSync('host saved');
   }
   async function delHost() { if (!selected) return; return deleteHost(selected); }
@@ -1548,7 +1574,8 @@ Pfad: ${path || knownHosts.path || 'known_hosts'}`);
             <div className="row"><input placeholder="RDP-Port" value={(draft as any).rdpPort || 3389} onChange={e=>setDraft({...draft,rdpPort:Number(e.target.value)} as any)}/><input placeholder="RDP-Benutzer" value={(draft as any).rdpUsername || ''} onChange={e=>setDraft({...draft,rdpUsername:e.target.value} as any)}/></div>
             <div className="row"><input placeholder="RDP-Domain optional" value={(draft as any).rdpDomain || ''} onChange={e=>setDraft({...draft,rdpDomain:e.target.value} as any)}/><input placeholder="RDP-Passwort" type="password" value={(draft as any).rdpPassword || ''} onChange={e=>setDraft({...draft,rdpPassword:e.target.value} as any)}/></div>
             <div className="row"><input placeholder="Breite" value={(draft as any).rdpWidth || 1280} onChange={e=>setDraft({...draft,rdpWidth:Number(e.target.value)} as any)}/><input placeholder="Höhe" value={(draft as any).rdpHeight || 800} onChange={e=>setDraft({...draft,rdpHeight:Number(e.target.value)} as any)}/><label className="editorLabel compactSelect">RDP Skalierung<select value={rdpScaleModeOf(draft)} onChange={e=>setDraft({...draft, rdpScaleMode:e.target.value as RDPScaleMode} as any)}><option value="smart">Smart Auto</option><option value="sharp">Scharf / Reconnect</option><option value="fit">Fit / Autoscale</option><option value="original">Originalgröße</option></select></label></div>
-            <p className="hint">RDP läuft im App-Fenster. Skalierung wird pro Host gespeichert. Passwort wird lokal verschlüsselt und nicht im Frontend angezeigt.</p>
+            <label className="editorLabel compactSelect">RDP Tastatur<select value={rdpKeyboardLayoutOf(draft)} onChange={e=>setDraft({...draft, rdpKeyboardLayout:e.target.value as RDPKeyboardLayout} as any)}><option value="en-US">Englisch / US</option><option value="de-DE">Deutsch / DE</option></select></label>
+            <p className="hint">RDP läuft im App-Fenster. Skalierung und Tastaturlayout werden pro Host gespeichert. Passwort wird lokal verschlüsselt und nicht im Frontend angezeigt.</p>
           </>}
           <input placeholder="Tags, comma separated" value={(draft.tags||[]).join(', ')} onChange={e=>setDraft({...draft,tags:e.target.value.split(',').map(x=>x.trim()).filter(Boolean)})}/>
           <div className="row"><button className="primary" onClick={saveHost}>Speichern</button><button onClick={closeHostEditor}>Abbrechen</button>{draft.id && <button className="danger" onClick={delHost}>Löschen</button>}</div>

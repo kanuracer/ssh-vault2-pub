@@ -33,6 +33,7 @@ type RdpClient struct {
 	audioSink        plugin.RDPSNDAudioSink
 	drdynvc          *plugin.DrdynvcClient
 	rdpgfx           *plugin.RDPGFXClient
+	setting          *Setting
 	mu               sync.Mutex
 	pending          []rdpEventHandler
 }
@@ -43,7 +44,10 @@ type rdpEventHandler struct {
 }
 
 func newRdpClient(s *Setting) *RdpClient {
-	return &RdpClient{}
+	if s == nil {
+		s = NewSetting()
+	}
+	return &RdpClient{setting: s}
 }
 
 func bitmapDecompress(bitmap *pdu.BitmapData) []byte {
@@ -134,7 +138,11 @@ func (c *RdpClient) Login(host, user, pwd string, width, height int) error {
 	c.pdu = pdu.NewClient(c.sec)
 	c.flushPendingHandlers()
 
-	c.mcs.SetClientCoreData(uint16(width), uint16(height))
+	var keyboardLayout uint32
+	if c.setting != nil {
+		keyboardLayout = c.setting.KeyboardLayout
+	}
+	c.mcs.SetClientCoreData(uint16(width), uint16(height), keyboardLayout)
 
 	c.sec.SetUser(user)
 	c.sec.SetPwd(pwd)

@@ -16,7 +16,7 @@ import (
 	"github.com/tomatome/grdp/protocol/t125/per"
 )
 
-// protocol helper
+// take idea from https://github.com/Madnikulin50/gordp
 
 // Multiple Channel Service layer
 
@@ -272,9 +272,12 @@ func NewMCSClient(t core.Transport) *MCSClient {
 	return c
 }
 
-func (c *MCSClient) SetClientCoreData(width, height uint16) {
+func (c *MCSClient) SetClientCoreData(width, height uint16, keyboardLayout uint32) {
 	c.clientCoreData.DesktopWidth = width
 	c.clientCoreData.DesktopHeight = height
+	if keyboardLayout != 0 {
+		c.clientCoreData.KbdLayout = gcc.KeyboardLayout(keyboardLayout)
+	}
 }
 
 func (c *MCSClient) connect(selectedProtocol uint32) {

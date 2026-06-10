@@ -103,6 +103,7 @@ export class HostConfig {
     "rdpWidth"?: number;
     "rdpHeight"?: number;
     "rdpScaleMode"?: string;
+    "rdpKeyboardLayout"?: string;
     "vaultId"?: string;
     "tags": string[];
     "group"?: string;
@@ -138,10 +139,10 @@ export class HostConfig {
      * Creates a new HostConfig instance from a string or object.
      */
     static createFrom($$source: any = {}): HostConfig {
-        const $$createField22_0 = $$createType0;
+        const $$createField23_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("tags" in $$parsedSource) {
-            $$parsedSource["tags"] = $$createField22_0($$parsedSource["tags"]);
+            $$parsedSource["tags"] = $$createField23_0($$parsedSource["tags"]);
         }
         return new HostConfig($$parsedSource as Partial<HostConfig>);
     }

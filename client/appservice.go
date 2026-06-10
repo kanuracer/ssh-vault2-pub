@@ -44,7 +44,7 @@ import (
 const releaseServer = "https://ssh-vault.example.org"
 const releaseSumsPublicKeyB64 = "vJeyJk2gpQ8XWilK/MseOuIWiw6llWP3NXbNPmw2HiQ="
 const sshUnknownHostKeyPrefix = "SSH_HOST_KEY_UNKNOWN|"
-const appVersion = "1.5.5"
+const appVersion = "1.5.6"
 const appHTTPTimeout = 20 * time.Second
 const maxReleaseIndexBytes int64 = 2 * 1024 * 1024
 const maxReleaseSumsBytes int64 = 1024 * 1024
@@ -128,7 +128,7 @@ func validateUpdateAssetForInstall(asset ReleaseAsset) error {
 
 func normalizeSyncEndpoint(endpoint string) string {
 	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
-	if endpoint == "" {
+	if endpoint == "" || endpoint == "https://ssh-vault.example.org" || endpoint == "https://192.0.2.117:18080" {
 		return releaseServer
 	}
 	return endpoint
@@ -162,30 +162,31 @@ func sshDialAddress(h HostConfig) (string, error) {
 }
 
 type HostConfig struct {
-	ID               string   `json:"id"`
-	Protocol         string   `json:"protocol,omitempty"`
-	Name             string   `json:"name"`
-	Address          string   `json:"address"`
-	Port             int      `json:"port"`
-	Username         string   `json:"username"`
-	AuthMode         string   `json:"authMode"`
-	KeyPath          string   `json:"keyPath,omitempty"`
-	Password         string   `json:"password,omitempty"`
-	PrivateKey       string   `json:"privateKey,omitempty"`
-	PasswordSaved    bool     `json:"passwordSaved,omitempty"`
-	PrivateKeySaved  bool     `json:"privateKeySaved,omitempty"`
-	RDPEnabled       bool     `json:"rdpEnabled,omitempty"`
-	RDPPort          int      `json:"rdpPort,omitempty"`
-	RDPUsername      string   `json:"rdpUsername,omitempty"`
-	RDPPassword      string   `json:"rdpPassword,omitempty"`
-	RDPPasswordSaved bool     `json:"rdpPasswordSaved,omitempty"`
-	RDPDomain        string   `json:"rdpDomain,omitempty"`
-	RDPWidth         int      `json:"rdpWidth,omitempty"`
-	RDPHeight        int      `json:"rdpHeight,omitempty"`
-	RDPScaleMode     string   `json:"rdpScaleMode,omitempty"`
-	VaultID          string   `json:"vaultId,omitempty"`
-	Tags             []string `json:"tags"`
-	Group            string   `json:"group,omitempty"`
+	ID                string   `json:"id"`
+	Protocol          string   `json:"protocol,omitempty"`
+	Name              string   `json:"name"`
+	Address           string   `json:"address"`
+	Port              int      `json:"port"`
+	Username          string   `json:"username"`
+	AuthMode          string   `json:"authMode"`
+	KeyPath           string   `json:"keyPath,omitempty"`
+	Password          string   `json:"password,omitempty"`
+	PrivateKey        string   `json:"privateKey,omitempty"`
+	PasswordSaved     bool     `json:"passwordSaved,omitempty"`
+	PrivateKeySaved   bool     `json:"privateKeySaved,omitempty"`
+	RDPEnabled        bool     `json:"rdpEnabled,omitempty"`
+	RDPPort           int      `json:"rdpPort,omitempty"`
+	RDPUsername       string   `json:"rdpUsername,omitempty"`
+	RDPPassword       string   `json:"rdpPassword,omitempty"`
+	RDPPasswordSaved  bool     `json:"rdpPasswordSaved,omitempty"`
+	RDPDomain         string   `json:"rdpDomain,omitempty"`
+	RDPWidth          int      `json:"rdpWidth,omitempty"`
+	RDPHeight         int      `json:"rdpHeight,omitempty"`
+	RDPScaleMode      string   `json:"rdpScaleMode,omitempty"`
+	RDPKeyboardLayout string   `json:"rdpKeyboardLayout,omitempty"`
+	VaultID           string   `json:"vaultId,omitempty"`
+	Tags              []string `json:"tags"`
+	Group             string   `json:"group,omitempty"`
 }
 type SessionState struct {
 	ID        string `json:"id"`
@@ -828,6 +829,7 @@ func normHost(h HostConfig) HostConfig {
 		if h.RDPScaleMode != "sharp" && h.RDPScaleMode != "fit" && h.RDPScaleMode != "original" {
 			h.RDPScaleMode = "smart"
 		}
+		h.RDPKeyboardLayout = normalizeRDPKeyboardLayout(h.RDPKeyboardLayout)
 		if h.RDPWidth == 0 {
 			h.RDPWidth = 1280
 		}
@@ -855,6 +857,7 @@ func normHost(h HostConfig) HostConfig {
 		h.RDPWidth = 0
 		h.RDPHeight = 0
 		h.RDPScaleMode = ""
+		h.RDPKeyboardLayout = ""
 	}
 	if h.Port == 0 {
 		h.Port = 22

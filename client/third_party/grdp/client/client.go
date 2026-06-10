@@ -220,10 +220,11 @@ func Bpp(bp uint16) (pixel int) {
 }
 
 type Setting struct {
-	Width    int
-	Height   int
-	Protocol string
-	LogLevel glog.LEVEL
+	Width          int
+	Height         int
+	Protocol       string
+	KeyboardLayout uint32
+	LogLevel       glog.LEVEL
 }
 
 func NewSetting() *Setting {

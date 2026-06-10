@@ -54,6 +54,7 @@ type rdpRec struct {
 	lastFullAt         time.Time
 	renderWake         chan struct{}
 	stats              rdpDiagnosticsCounters
+	keyboardLayout     string
 }
 
 type rdpDiagnosticsCounters struct {
@@ -144,8 +145,9 @@ func (s *AppService) ConnectRDP(hostID string, width int, height int) (SessionSt
 	}
 	id := uuid.NewString()
 	st := SessionState{ID: id, HostID: h.ID, Title: h.Name + " RDP", Status: "connecting", StartedAt: time.Now().UnixMilli()}
-	cli := newRDPClientEngine(addr, user, h.RDPPassword, width, height)
-	r := &rdpRec{state: st, client: cli, width: width, height: height, closed: make(chan struct{}), renderWake: make(chan struct{}, 1)}
+	layout := normalizeRDPKeyboardLayout(h.RDPKeyboardLayout)
+	cli := newRDPClientEngine(addr, user, h.RDPPassword, width, height, rdpKeyboardLayoutCode(layout))
+	r := &rdpRec{state: st, client: cli, width: width, height: height, closed: make(chan struct{}), renderWake: make(chan struct{}, 1), keyboardLayout: layout}
 	cli.SetClipboardTextProvider(func() string {
 		r.clipMu.Lock()
 		if r.clipTextSet {
@@ -958,6 +960,26 @@ func (s *AppService) RDPTypeText(id string, text string) error {
 	defer r.inputMu.Unlock()
 	r.client.TypeText(text)
 	return nil
+}
+
+func normalizeRDPKeyboardLayout(layout string) string {
+	switch strings.ToLower(strings.TrimSpace(layout)) {
+	case "de", "de-de", "german", "deutsch", "0x00000407":
+		return "de-DE"
+	case "us", "en", "en-us", "english", "eng", "0x00000409":
+		return "en-US"
+	default:
+		return "en-US"
+	}
+}
+
+func rdpKeyboardLayoutCode(layout string) uint32 {
+	switch normalizeRDPKeyboardLayout(layout) {
+	case "de-DE":
+		return 0x00000407
+	default:
+		return 0x00000409
+	}
 }
 
 func browserCodeToRDPScancode(code string) (uint8, bool, bool) {

@@ -14,7 +14,7 @@
     !define INFO_PRODUCTNAME "ssh-vault2"
 !endif
 !ifndef INFO_PRODUCTVERSION
-    !define INFO_PRODUCTVERSION "1.1.30"
+    !define INFO_PRODUCTVERSION "1.5.6"
 !endif
 !ifndef INFO_COPYRIGHT
     !define INFO_COPYRIGHT "© 2026, Example Org"

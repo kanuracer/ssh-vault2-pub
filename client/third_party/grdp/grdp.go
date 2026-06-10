@@ -165,7 +165,7 @@ func main() {
 	g := NewClient(ip, glog.LEVEL(loglevel))
 	err := g.Login(domain, user, passwd)
 	//g := NewClient("192.0.2.132:3389", glog.LEVEL(loglevel))
-	//err := g.Login("", "administrator", "Jhadmin123")
+	//err := g.Login("", "administrator", "test-password")
 	//g := NewClient("192.0.2.100:5902", glog.DEBUG)
 	//err := g.LoginVNC()
 

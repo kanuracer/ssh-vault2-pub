@@ -14,7 +14,7 @@ import (
 	"github.com/tomatome/grdp/protocol/tpkt"
 )
 
-// protocol helper
+// take idea from https://github.com/Madnikulin50/gordp
 
 /**
  * Message type present in X224 packet header

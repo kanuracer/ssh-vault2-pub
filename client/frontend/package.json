@@ -1,13 +1,13 @@
 {
   "name": "ssh-vault2-frontend",
   "private": true,
-  "version": "1.5.5",
+  "version": "1.5.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build:dev": "tsc && vite build --minify false --mode development",
     "build": "tsc && vite build --mode production",
-    "test": "node -e \"console.log('No public frontend tests included')\"",
+    "test": "node --test tests/*.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

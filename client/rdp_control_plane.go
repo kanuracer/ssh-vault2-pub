@@ -36,10 +36,11 @@ type rdpEngineControl interface {
 
 var _ rdpEngineControl = (*client.Client)(nil)
 
-func newRDPClientEngine(addr, user, password string, width, height int) rdpEngineControl {
+func newRDPClientEngine(addr, user, password string, width, height int, keyboardLayout uint32) rdpEngineControl {
 	setting := client.NewSetting()
 	setting.Width = width
 	setting.Height = height
+	setting.KeyboardLayout = keyboardLayout
 	setting.LogLevel = glog.ERROR
 	return client.NewClient(addr, user, password, client.TC_RDP, setting)
 }

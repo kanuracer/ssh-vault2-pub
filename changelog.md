@@ -2,6 +2,21 @@
 
 ## Kurze Zusammenfassung
 
+### Bugfix Update 1.5.6
+
+Dieses Update konzentriert sich auf konkrete Fehlerbehebungen in Terminal- und RDP-Sitzungen.
+
+- Terminal-Einfügen wurde robuster gemacht, besonders bei mehrzeiligem Text, Codeblöcken und Shells mit Bracketed-Paste-Unterstützung.
+- Rechtsklick-/Paste-Verhalten im Terminal nutzt nun einen eigenen Paste-Pfad statt ungefilterter Masseneingabe.
+- RDP-Hosts speichern ein eigenes Tastaturlayout pro Host, inklusive deutscher Tastaturbelegung.
+- RDP-Tastaturereignisse werden konsistenter an die Sitzung weitergegeben.
+- RDP-Verbindungsaufbau und Session-Aushandlung wurden stabilisiert.
+- RDP-Rendering behandelt Flush-/Frame-Zustände robuster und reduziert leere oder hängenbleibende Bildzustände.
+- Windows-Installer-Metadaten melden nun ebenfalls Version 1.5.6, damit Systemdialoge und Installer-Anzeigen nicht auf einem alten Versionswert stehen bleiben.
+- Tests wurden erweitert, damit Terminal-Paste, RDP-Tastaturlayout und RDP-Sitzungsverhalten nicht erneut regressieren.
+
+---
+
 ssh-vault2 wurde zu einem umfassenderen Remote-Workspace erweitert. Neben SSH-Terminal und SFTP-Dateimanager enthält die Anwendung jetzt einen integrierten RDP-Arbeitsbereich, ein robusteres Terminal, ein ausgebautes Sync-/Vault-System, eine modernisierte Oberfläche, bessere Self-Hosting-Dokumentation und mehr Sicherheitsprüfungen.
 
 Die wichtigsten Punkte:
