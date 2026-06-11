@@ -14,6 +14,7 @@ test('terminal right click opens first-click paste context menu', () => {
   assert.match(app, /contextMenuHandler\?: \(e: globalThis\.MouseEvent\) => void/, 'terminal record must keep native contextmenu handler for cleanup');
   assert.match(app, /bracketedPaste\?: boolean/, 'terminal record must track remote bracketed paste mode');
   assert.match(app, /pasteHandler\?: \(e: globalThis\.ClipboardEvent\) => void/, 'terminal record must keep native paste handler for cleanup');
+  assert.match(app, /keyDownHandler\?: \(e: globalThis\.KeyboardEvent\) => void/, 'terminal record must keep native Ctrl+V keydown handler for cleanup');
   assert.match(app, /existing\.contextMenuHandler[\s\S]*removeEventListener\('contextmenu', existing\.contextMenuHandler, \{capture:true\}\)/, 'remount cleanup must remove the native capture listener');
   assert.match(app, /async function pasteTerminalClipboard\(sessionId: string\)/, 'terminal paste action is required');
   assert.match(app, /navigator\.clipboard\.readText\(\)/, 'paste action should read OS clipboard text');
@@ -22,6 +23,8 @@ test('terminal right click opens first-click paste context menu', () => {
   assert.match(app, /rec\?\.bracketedPaste[\s\S]*\\x1b\[200~/, 'multiline paste should use bracketed paste when the remote shell enables it');
   assert.match(app, /normalized\.replace\(\/\\n\/g, '\\r'\)/, 'multiline fallback should send terminal CR line endings');
   assert.match(app, /el\.addEventListener\('paste', pasteHandler, \{capture:true\}\)/, 'native paste must be intercepted before xterm bulk-pastes unsafely');
+  assert.match(app, /el\.addEventListener\('keydown', keyDownHandler, \{capture:true\}\)/, 'Ctrl+V keydown must be intercepted before xterm/WebView can drop it');
+  assert.match(app, /if \(isTerminalPasteShortcut\(e\)\)/, 'terminal keydown handler must detect Ctrl/Cmd+V paste shortcut');
   assert.match(app, /await writeSSHPasteText\(sessionId, text\)/, 'context-menu paste must route through paste helper');
   assert.match(app, /async function copyTerminalSelection\(sessionId: string\)/, 'terminal copy action is required');
   assert.match(app, /terms\.current\[sessionId\]\?\.term\.getSelection\(\)/, 'copy action should read the active xterm selection');

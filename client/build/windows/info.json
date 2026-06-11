@@ -1,15 +1,16 @@
 {
-	"fixed": {
-		"file_version": "1.5.6"
-	},
-	"info": {
-		"0000": {
-			"ProductVersion": "1.5.6",
-			"CompanyName": "Example Org",
-			"FileDescription": "SSH/SFTP desktop client",
-			"LegalCopyright": "© 2026, Example Org",
-			"ProductName": "ssh-vault2",
-			"Comments": "SSH/SFTP desktop client"
-		}
-	}
+  "fixed": {
+    "file_version": "1.5.14"
+  },
+  "info": {
+    "0000": {
+      "ProductVersion": "1.5.14",
+      "CompanyName": "Example Org",
+      "FileDescription": "SSH/SFTP desktop client",
+      "LegalCopyright": "© 2026, Example Org",
+      "ProductName": "ssh-vault2",
+      "Comments": "SSH/SFTP desktop client"
+    }
+  },
+  "version": "1.5.14"
 }

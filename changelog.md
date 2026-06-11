@@ -2,6 +2,21 @@
 
 ## Kurze Zusammenfassung
 
+## Bugfix Update 1.5.14
+
+Dieses Update bündelt die öffentlichen Bugfixes seit 1.5.6 und konzentriert sich auf bessere Settings-UX, robustere Paste-Eingaben und sauberere Release-/Update-Metadaten.
+
+- Einstellungen: Lange Einstellungsseiten wurden in kompakte Kategorien aufgeteilt.
+- Einstellungen: `Datensafe`, `Sync-Konto` und verschlüsselter Sync sind im Bereich `Sicherheit & Sync` zusammengeführt.
+- Einstellungen: Kategorie-Tabs sind sichtbar linksbündiger, kompakter und mobil wieder ohne Desktop-Offset.
+- Einstellungen: Teilüberschriften, Formularlabels und Placeholder im Security/Sync-Bereich sind kontrastreicher; sichtbare Trennlinien verbessern die Lesbarkeit.
+- Terminal: `Ctrl+V`/`Cmd+V` und Rechtsklick-Paste laufen über den sicheren Paste-Pfad für mehrzeilige Clipboard-Inhalte.
+- Release-Feed: App-Downloads werden sauber von Checksummen/Metadaten getrennt.
+- Windows/Linux Build-Metadaten wurden auf Version 1.5.14 aktualisiert.
+- Tests wurden um Settings-Navigation, visuelle Subsection-Regeln, Terminal-Paste und Update-Changelog-Regressionen erweitert.
+
+---
+
 ### Bugfix Update 1.5.6
 
 Dieses Update konzentriert sich auf konkrete Fehlerbehebungen in Terminal- und RDP-Sitzungen.

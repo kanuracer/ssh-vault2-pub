@@ -11,7 +11,7 @@ The repository contains the public self-hosting source split into:
 
 ## Highlights
 
-- Bugfix release `1.5.6` for terminal paste handling, RDP session input stability and Windows installer metadata
+- Bugfix release `1.5.14` for settings readability, settings tab alignment, terminal paste handling, RDP session input stability and Windows installer metadata
 - SSH terminal sessions with tabs and stable xterm rendering
 - SFTP commander with upload, download, folders, properties and file operations
 - Integrated RDP workspace with in-app desktop viewer, scaling modes, keyboard/mouse input and clipboard support
@@ -96,7 +96,7 @@ Expected health response:
 {
   "ok": true,
   "service": "ssh-vault2",
-  "version": "1.5.6"
+  "version": "1.5.14"
 }
 ```
 
@@ -178,7 +178,7 @@ This contains server-side account metadata, sync blobs, downloads and release me
 
 ## Changelog
 
-See [`changelog.md`](./changelog.md) for the detailed changelog, including the `1.5.6` bugfix update.
+See [`changelog.md`](./changelog.md) for the detailed changelog, including the `1.5.14` bugfix update.
 
 ## License
 

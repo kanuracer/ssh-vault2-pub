@@ -110,7 +110,7 @@ test('landing page shows only quickstart and links detailed desktop guide page',
     assert.match(serverGuide, /direkt per SSH, SFTP oder RDP/);
     assert.match(serverGuide, /Voraussetzungen/);
     assert.match(serverGuide, /Auf diesem Server bauen und starten/);
-    assert.match(serverGuide, /git clone https:\/\/github\.com\/example-org\/ssh-vault2\.git ssh-vault2-source/);
+    assert.match(serverGuide, /git clone https:\/\/github\.com\/kanuracer\/ssh-vault2-pub\.git ssh-vault2-source/);
     assert.match(serverGuide, /up -d --build/);
     assert.match(serverGuide, /build\.context/);
     assert.match(serverGuide, /Reverse-Proxy und HTTPS/);

@@ -44,7 +44,7 @@ import (
 const releaseServer = "https://ssh-vault.example.org"
 const releaseSumsPublicKeyB64 = "vJeyJk2gpQ8XWilK/MseOuIWiw6llWP3NXbNPmw2HiQ="
 const sshUnknownHostKeyPrefix = "SSH_HOST_KEY_UNKNOWN|"
-const appVersion = "1.5.6"
+const appVersion = "1.5.14"
 const appHTTPTimeout = 20 * time.Second
 const maxReleaseIndexBytes int64 = 2 * 1024 * 1024
 const maxReleaseSumsBytes int64 = 1024 * 1024
@@ -128,7 +128,7 @@ func validateUpdateAssetForInstall(asset ReleaseAsset) error {
 
 func normalizeSyncEndpoint(endpoint string) string {
 	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
-	if endpoint == "" || endpoint == "https://ssh-vault.example.org" || endpoint == "https://192.0.2.117:18080" {
+	if endpoint == "" {
 		return releaseServer
 	}
 	return endpoint

@@ -6,7 +6,7 @@ info:
   description: "SSH/SFTP desktop client"
   copyright: "(c) 2026 Example Org"
   comments: "SSH/SFTP desktop client"
-  version: "1.5.6"
+  version: "1.5.14"
 dev_mode:
   root_path: .
   log_level: warn
